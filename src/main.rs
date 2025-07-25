@@ -1,48 +1,100 @@
 use axum::{
-    Json, Router,
-    extract::{Query, State},
-    routing::{get, post},
+    extract::{Query, State}, response::IntoResponse, routing::{get, post}, Json, Router
 };
 use chrono::{DateTime, Utc};
-use reqwest::Client;
+use redis::{AsyncCommands, aio::MultiplexedConnection};
+use reqwest::{Client, StatusCode};
 use serde::{Deserialize, Serialize};
 
-struct Data {
-    data: (DateTime<Utc>, f64),
+#[derive(Clone)]
+struct AppState {
+    redis: MultiplexedConnection,
+    client: Client,
 }
 
 #[tokio::main]
 async fn main() {
     let client = Client::new();
+    let redis_client = redis::Client::open("redis://127.0.0.1/").unwrap();
+    let mut conn = redis_client
+        .get_multiplexed_async_connection()
+        .await
+        .unwrap();
+    let appstate = AppState {
+        redis: conn,
+        client: client,
+    };
 
     let app = Router::new()
         .route("/payments", post(payments))
         .route("/payments-summary", get(payments_summary))
-        .with_state(client);
+        .with_state(appstate);
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:9999").await.unwrap();
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();
 
     axum::serve(listener, app).await.unwrap();
 }
 
-async fn payments(State(client): State<Client>, Json(cp): Json<CreatePayment>) {
+async fn payments(State(appstate): State<AppState>, Json(cp): Json<CreatePayment>) -> impl IntoResponse {
     let rp = RequestPayment {
         create_payment: cp,
         requested_at: Utc::now(),
     };
 
-    let _ = client
+    let response = appstate
+        .client
         .clone()
         .post("http://payment-processor-default:8080/payments")
         .json(&rp)
         .send()
-        .await
-        .unwrap();
+        .await;
+
+    if let Err(_) = response {
+        return StatusCode::INTERNAL_SERVER_ERROR;
+    }
+
+    let timestamp = rp.requested_at.timestamp_millis();
+
+    let result = appstate
+        .redis
+        .clone()
+        .zadd::<&str, i64, f64, u8>(
+            "all",
+            rp.create_payment.amount,
+            timestamp,
+        )
+        .await;
+
+    if let Err(_) = result {
+        return StatusCode::INTERNAL_SERVER_ERROR;
+    }
+
+    StatusCode::OK
 }
 
 async fn payments_summary(
-    Query(_): Query<PaymentsSummaryQueryParams>,
-) -> Json<PaymentProcessorsSummaries> {
+    State(appstate): State<AppState>,
+    Query(params): Query<PaymentsSummaryQueryParams>,
+) -> impl IntoResponse {
+    let start = params.from.map(|dt| dt.timestamp_millis()).unwrap_or_else(|| 0);
+    let end = params.to.map(|dt| dt.timestamp_millis()).unwrap_or_else(|| i64::MAX);
+
+    let result = appstate
+        .redis
+        .clone()
+        .zrangebyscore(
+            "all",
+            start,
+            end
+        )
+        .await;
+
+    if let Err(_) = result {
+        return StatusCode::INTERNAL_SERVER_ERROR;
+    }
+
+    let sum = result.iter().filter_map(|s| s.parse::<f64>().ok()).sum();
+
     let summary = PaymentProcessorsSummaries {
         default_sum: Summary {
             total_requests: 0,

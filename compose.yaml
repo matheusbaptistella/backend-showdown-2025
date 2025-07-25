@@ -18,11 +18,6 @@ services:
       target: final
     hostname:
       - api1
-    environment:
-      - APP_PORT=8080
-      - REDIS_URL=redis:6379
-      - PROCESSOR_DEFAULT_URL=http://payment-processor-default:8080
-      - PROCESSOR_FALLBACK_URL=http://payment-processor-fallback:8080
     networks:
       - backend
       - payment-processor
@@ -33,11 +28,6 @@ services:
   # api2:
   #   <<: *api
   #   hostname: api2
-  #   environment:
-  #       - APP_PORT=8080
-  #       - REDIS_URL=redis:6379
-  #       - PROCESSOR_DEFAULT_URL=http://payment-processor-default:8080
-  #       - PROCESSOR_FALLBACK_URL=http://payment-processor-fallback:8080
 
   redis:
     image: redis:8.0.3-alpine
