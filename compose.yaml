@@ -8,7 +8,7 @@ services:
       # - api2
     ports:
       - "9999:9999"
-    network:
+    networks:
       - backend
       - payment-processor
 
@@ -16,8 +16,9 @@ services:
     build:
       context: .
       target: final
-    hostname:
-      - api1
+    hostname: api1
+    expose:
+      - 3000
     networks:
       - backend
       - payment-processor
@@ -31,7 +32,6 @@ services:
 
   redis:
     image: redis:8.0.3-alpine
-    container_name: rinha-redis
     command: redis-server --save "" --appendonly no --maxclients 20000
     networks:
       - backend

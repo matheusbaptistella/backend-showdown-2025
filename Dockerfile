@@ -17,7 +17,7 @@ ARG APP_NAME
 WORKDIR /app
 
 # Install host build dependencies.
-RUN apk add --no-cache clang lld musl-dev git
+RUN apk add --no-cache clang lld musl-dev git openssl-dev openssl-libs-static pkgconfig
 
 # Build the application.
 # Leverage a cache mount to /usr/local/cargo/registry/
@@ -63,9 +63,6 @@ USER appuser
 
 # Copy the executable from the "build" stage.
 COPY --from=build /bin/server /bin/
-
-# Expose the port that the application listens on.
-EXPOSE 9999
 
 # What the container should run when it is started.
 CMD ["/bin/server"]

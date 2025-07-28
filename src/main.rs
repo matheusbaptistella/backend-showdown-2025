@@ -15,7 +15,7 @@ struct AppState {
 #[tokio::main]
 async fn main() {
     let client = Client::new();
-    let redis_client = redis::Client::open("redis://127.0.0.1/").unwrap();
+    let redis_client = redis::Client::open("redis://redis/").unwrap();
     let mut conn = redis_client
         .get_multiplexed_async_connection()
         .await
@@ -30,7 +30,8 @@ async fn main() {
         .route("/payments-summary", get(payments_summary))
         .with_state(appstate);
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
+    println!("Listening on 0.0.0.0:3000");
 
     axum::serve(listener, app).await.unwrap();
 }
@@ -59,7 +60,7 @@ async fn payments(State(appstate): State<AppState>, Json(cp): Json<CreatePayment
         .redis
         .clone()
         .zadd::<&str, i64, f64, u8>(
-            "all",
+            "default",
             rp.create_payment.amount,
             timestamp,
         )
@@ -79,26 +80,27 @@ async fn payments_summary(
     let start = params.from.map(|dt| dt.timestamp_millis()).unwrap_or_else(|| 0);
     let end = params.to.map(|dt| dt.timestamp_millis()).unwrap_or_else(|| i64::MAX);
 
-    let result = appstate
+    let result= appstate
         .redis
         .clone()
-        .zrangebyscore(
-            "all",
+        .zrangebyscore::<&str, i64, i64, Vec<String>>(
+            "default",
             start,
             end
         )
-        .await;
+        .await
+        .unwrap();
 
-    if let Err(_) = result {
-        return StatusCode::INTERNAL_SERVER_ERROR;
-    }
+    let parsed: Vec<f64> = result.into_iter().filter_map(|s| s.parse::<f64>().ok()).collect();
 
-    let sum = result.iter().filter_map(|s| s.parse::<f64>().ok()).sum();
+    let count = parsed.len();
+
+    let sum: f64 = parsed.iter().sum();
 
     let summary = PaymentProcessorsSummaries {
         default_sum: Summary {
-            total_requests: 0,
-            total_amount: 0.0,
+            total_requests: count,
+            total_amount: sum,
         },
         fallback: Summary {
             total_requests: 0,
@@ -140,7 +142,7 @@ struct PaymentProcessorsSummaries {
 #[derive(Serialize)]
 struct Summary {
     #[serde(rename = "totalRequests")]
-    total_requests: u32,
+    total_requests: usize,
     #[serde(rename = "totalAmount")]
     total_amount: f64,
 }
