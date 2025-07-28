@@ -1,5 +1,8 @@
 use axum::{
-    extract::{Query, State}, response::IntoResponse, routing::{get, post}, Json, Router
+    Json, Router,
+    extract::{Query, State},
+    response::IntoResponse,
+    routing::{get, post},
 };
 use chrono::{DateTime, Utc};
 use redis::{AsyncCommands, aio::MultiplexedConnection};
@@ -36,7 +39,10 @@ async fn main() {
     axum::serve(listener, app).await.unwrap();
 }
 
-async fn payments(State(appstate): State<AppState>, Json(cp): Json<CreatePayment>) -> impl IntoResponse {
+async fn payments(
+    State(appstate): State<AppState>,
+    Json(cp): Json<CreatePayment>,
+) -> impl IntoResponse {
     let rp = RequestPayment {
         create_payment: cp,
         requested_at: Utc::now(),
@@ -50,20 +56,26 @@ async fn payments(State(appstate): State<AppState>, Json(cp): Json<CreatePayment
         .send()
         .await;
 
-    if let Err(_) = response {
-        return StatusCode::INTERNAL_SERVER_ERROR;
+    let result = match response {
+        Ok(resp) => resp,
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR,
+    };
+
+    if !result.status().is_success() {
+        return result.status();
     }
+
+    let key = format!(
+        "{}:{}",
+        rp.create_payment.correlation_id, rp.create_payment.amount
+    );
 
     let timestamp = rp.requested_at.timestamp_millis();
 
     let result = appstate
         .redis
         .clone()
-        .zadd::<&str, i64, f64, u8>(
-            "default",
-            rp.create_payment.amount,
-            timestamp,
-        )
+        .zadd::<&str, i64, String, u8>("default", key, timestamp)
         .await;
 
     if let Err(_) = result {
@@ -77,21 +89,29 @@ async fn payments_summary(
     State(appstate): State<AppState>,
     Query(params): Query<PaymentsSummaryQueryParams>,
 ) -> impl IntoResponse {
-    let start = params.from.map(|dt| dt.timestamp_millis()).unwrap_or_else(|| 0);
-    let end = params.to.map(|dt| dt.timestamp_millis()).unwrap_or_else(|| i64::MAX);
+    let start = params
+        .from
+        .map(|dt| dt.timestamp_millis())
+        .unwrap_or_else(|| 0);
+    let end = params
+        .to
+        .map(|dt| dt.timestamp_millis())
+        .unwrap_or_else(|| i64::MAX);
 
-    let result= appstate
+    let result = appstate
         .redis
         .clone()
-        .zrangebyscore::<&str, i64, i64, Vec<String>>(
-            "default",
-            start,
-            end
-        )
+        .zrangebyscore::<&str, i64, i64, Vec<String>>("default", start, end)
         .await
         .unwrap();
 
-    let parsed: Vec<f64> = result.into_iter().filter_map(|s| s.parse::<f64>().ok()).collect();
+    let parsed: Vec<f64> = result
+        .into_iter()
+        .filter_map(|s| {
+            s.split_once(':')
+                .and_then(|(_, a)| a.parse::<f64>().ok())
+        })
+        .collect();
 
     let count = parsed.len();
 
