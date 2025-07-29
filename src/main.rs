@@ -89,6 +89,7 @@ async fn payments_summary(
     State(appstate): State<AppState>,
     Query(params): Query<PaymentsSummaryQueryParams>,
 ) -> impl IntoResponse {
+    println!("Handling summary request!");
     let start = params
         .from
         .map(|dt| dt.timestamp_millis())
