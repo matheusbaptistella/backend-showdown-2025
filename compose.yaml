@@ -15,7 +15,7 @@ services:
       resources:
         limits:
           cpus: "0.25"
-          memory: "20MB"
+          memory: "30MB"
 
   api1: &api
     build:
@@ -34,7 +34,7 @@ services:
       resources:
         limits:
           cpus: "0.5"
-          memory: "15MB"
+          memory: "35MB"
 
   api2:
     <<: *api
@@ -54,7 +54,7 @@ services:
       resources:
         limits:
           cpus: "0.25"
-          memory: "300MB"
+          memory: "250MB"
 
 networks:
   backend:
