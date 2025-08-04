@@ -10,8 +10,9 @@ pub struct CreatePayment {
 
 #[derive(Serialize)]
 pub struct RequestPayment {
-    #[serde(flatten)]
-    pub create_payment: CreatePayment,
+    #[serde(rename = "correlationId")]
+    pub correlation_id: String,
+    pub amount: f64,
     #[serde(rename = "requestedAt")]
     pub requested_at: DateTime<Utc>,
 }

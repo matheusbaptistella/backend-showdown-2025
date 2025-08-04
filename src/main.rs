@@ -45,35 +45,18 @@ async fn payments(
     State(appstate): State<AppState>,
     Json(cp): Json<CreatePayment>,
 ) -> impl IntoResponse {
-    let key = format!("{}:{}", cp.correlation_id, cp.amount);
-
-    let res = appstate
-        .redis
-        .clone()
-        .zscore::<&str, &str, Option<i64>>("default", &key)
-        .await;
-
-    if let Ok(Some(_score)) = res {
-        return StatusCode::INTERNAL_SERVER_ERROR;
-    }
-
-    let res = appstate
-        .redis
-        .clone()
-        .zscore::<&str, &str, Option<i64>>("fallback", &key)
-        .await;
-
-    if let Ok(Some(_score)) = res {
-        return StatusCode::INTERNAL_SERVER_ERROR;
-    }
+    let amount = (cp.amount * 100.0) as u64;
+    let key = format!("{}:{}", cp.correlation_id, amount);
 
     let rp = RequestPayment {
-        create_payment: cp,
+        correlation_id: cp.correlation_id,
+        amount: cp.amount,
         requested_at: Utc::now(),
     };
 
     let timestamp = rp.requested_at.timestamp_millis();
 
+    let mut try_fallback = false;
     loop {
         let response = appstate
             .client
@@ -86,49 +69,72 @@ async fn payments(
         match response {
             Ok(resp) => {
                 if !resp.status().is_server_error() {
-                    let result = appstate
+                    if resp.status() == StatusCode::UNPROCESSABLE_ENTITY {
+                        try_fallback = true;
+                    }
+                    else {
+                        let result = appstate
                         .redis
                         .clone()
-                        .zadd::<&str, i64, String, u8>("default", key, timestamp)
+                        .zadd::<&str, i64, &str, u8>("default", &key, timestamp)
                         .await;
 
-                    if let Err(_) = result {
-                        return StatusCode::INTERNAL_SERVER_ERROR;
+                        if let Err(e) = result {
+                            println!("redis error {}", e);
+                            return StatusCode::INTERNAL_SERVER_ERROR;
+                        }
                     }
 
                     break;
                 }
+            },
+            Err(e) => {
+                println!("Error in default request {}", e);
+                return StatusCode::INTERNAL_SERVER_ERROR;
             }
-            Err(_) => {}
-        };
+        }
+    };
 
-        let response = appstate
-            .client
-            .clone()
-            .post("http://payment-processor-fallback:8080/payments")
-            .json(&rp)
-            .send()
-            .await;
+    if try_fallback {
+        loop {
+            let response = appstate
+                .client
+                .clone()
+                .post("http://payment-processor-fallback:8080/payments")
+                .json(&rp)
+                .send()
+                .await;
 
-        match response {
-            Ok(resp) => {
-                if !resp.status().is_server_error() {
-                    let result = appstate
-                        .redis
-                        .clone()
-                        .zadd::<&str, i64, String, u8>("fallback", key, timestamp)
-                        .await;
+            match response {
+                Ok(resp) => {
+                    if !resp.status().is_server_error() {
+                        if resp.status().is_success() {
+                            let result = appstate
+                            .redis
+                            .clone()
+                            .zadd::<&str, i64, &str, u8>("default", &key, timestamp)
+                            .await;
 
-                    if let Err(_) = result {
-                        return StatusCode::INTERNAL_SERVER_ERROR;
+                            if let Err(e) = result {
+                                println!("redis error {}", e);
+                                return StatusCode::INTERNAL_SERVER_ERROR;
+                            }
+                        }
+                        else {
+                            println!("Status is not success");
+                            return StatusCode::INTERNAL_SERVER_ERROR;
+                        }
+
+                        break;
                     }
-
-                    break;
+                }
+                Err(e) => {
+                    println!("Error in fallback request {}", e);
+                    return StatusCode::INTERNAL_SERVER_ERROR;
                 }
             }
-            Err(_) => {}
         };
-    }
+    };
 
     StatusCode::OK
 }
@@ -141,6 +147,7 @@ async fn payments_summary(
         .from
         .map(|dt| dt.timestamp_millis())
         .unwrap_or_else(|| i64::MIN);
+    
     let end = params
         .to
         .map(|dt| dt.timestamp_millis())
@@ -153,18 +160,20 @@ async fn payments_summary(
         .await
         .unwrap();
 
-    let parsed: Vec<f64> = result
+    let parsed: Vec<u64> = result
         .into_iter()
-        .filter_map(|s| s.split_once(':').and_then(|(_, a)| a.parse::<f64>().ok()))
+        .filter_map(|s| s.split_once(':').and_then(|(_, a)| a.parse::<u64>().ok()))
         .collect();
 
     let count = parsed.len();
 
-    let sum: f64 = parsed.iter().sum();
+    let sum: u64 = parsed.iter().sum();
+
+    let sum_trunc: f64 = (sum as f64) / 100.0;
 
     let default_sum = Summary {
         total_requests: count,
-        total_amount: sum,
+        total_amount: sum_trunc,
     };
 
     let result = appstate
@@ -174,18 +183,20 @@ async fn payments_summary(
         .await
         .unwrap();
 
-    let parsed: Vec<f64> = result
+    let parsed: Vec<u64> = result
         .into_iter()
-        .filter_map(|s| s.split_once(':').and_then(|(_, a)| a.parse::<f64>().ok()))
+        .filter_map(|s| s.split_once(':').and_then(|(_, a)| a.parse::<u64>().ok()))
         .collect();
 
     let count = parsed.len();
 
-    let sum: f64 = parsed.iter().sum();
+    let sum: u64 = parsed.iter().sum();
+
+    let sum_trunc: f64 = (sum as f64) / 100.0;
 
     let fallback = Summary {
         total_requests: count,
-        total_amount: sum,
+        total_amount: sum_trunc,
     };
 
     let summary = PaymentProcessorsSummaries {

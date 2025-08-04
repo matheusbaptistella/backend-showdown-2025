@@ -22,6 +22,9 @@ services:
       context: .
       target: final
     hostname: api1
+    environment:
+      - PROCESSOR_DEFAULT_URL=http://payment-processor-default:8080
+      - PROCESSOR_FALLBACK_URL=http://payment-processor-fallback:8080
     expose:
       - 3000
     networks:
