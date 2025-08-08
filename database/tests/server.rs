@@ -17,10 +17,20 @@ async fn key_value_get_set() {
         .await
         .unwrap();
 
-    // Check for 0, 0 return
+    // Check for 0, 0 return since the db has't processed any requests or amounts yet
+    let mut response = [0; 12];
+    stream.read_exact(&mut response).await.unwrap();
+    assert_eq!(b"*2\r\n:0\r\n:0\r\n", &response);
+
+    stream
+        .write_all(b"*3\r\n$3\r\nSET\r\n;\r\n17231289888273\r\n:\r\n1990\r\n")
+        .await
+        .unwrap();
+
+    // Read OK
     let mut response = [0; 5];
     stream.read_exact(&mut response).await.unwrap();
-    assert_eq!(b"$-1\r\n", &response);
+    assert_eq!(b"+OK\r\n", &response);
 }
 
 async fn start_server() -> SocketAddr {
