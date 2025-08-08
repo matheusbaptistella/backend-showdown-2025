@@ -1,0 +1,14 @@
+[package]
+name = "backend-showdown-2025"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+axum = "0.8.4"
+chrono = { version = "0.4.41", features = ["serde"] }
+redis = { version = "0.32.4", features = ["tokio-comp"] }
+reqwest = { version = "0.12.22", features = ["json"] }
+serde = { version = "1.0.219", features = ["derive"] }
+tokio = { version = "1.46.1", features = ["full"] }
+tracing = "0.1.41"
+tracing-subscriber = "0.3.19"

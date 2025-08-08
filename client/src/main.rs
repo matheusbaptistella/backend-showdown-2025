@@ -19,6 +19,9 @@ struct AppState {
 
 #[tokio::main]
 async fn main() {
+    let subscriber = tracing_subscriber::FmtSubscriber::new();
+    tracing::subscriber::set_global_default(subscriber).unwrap();
+
     let client = Client::new();
     let redis_client = redis::Client::open("redis://redis/").unwrap();
     let mut conn = redis_client
@@ -36,7 +39,7 @@ async fn main() {
         .with_state(appstate);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
-    println!("Listening on 0.0.0.0:3000");
+    tracing::info!("Listening on 0.0.0.0:3000");
 
     axum::serve(listener, app).await.unwrap();
 }
@@ -80,7 +83,7 @@ async fn payments(
                         .await;
 
                         if let Err(e) = result {
-                            println!("redis error {}", e);
+                            tracing::info!("redis error {}", e);
                             return StatusCode::INTERNAL_SERVER_ERROR;
                         }
                     }
@@ -89,7 +92,7 @@ async fn payments(
                 }
             },
             Err(e) => {
-                println!("Error in default request {}", e);
+                tracing::info!("Error in default request {}", e);
                 return StatusCode::INTERNAL_SERVER_ERROR;
             }
         }
@@ -116,12 +119,16 @@ async fn payments(
                             .await;
 
                             if let Err(e) = result {
-                                println!("redis error {}", e);
+                                tracing::info!("redis error {}", e);
                                 return StatusCode::INTERNAL_SERVER_ERROR;
+                            }
+
+                            if let Ok(num) = result {
+                                tracing::info!("Redis result = {}", num)
                             }
                         }
                         else {
-                            println!("Status is not success");
+                            tracing::info!("Status is not success");
                             return StatusCode::INTERNAL_SERVER_ERROR;
                         }
 
@@ -129,7 +136,7 @@ async fn payments(
                     }
                 }
                 Err(e) => {
-                    println!("Error in fallback request {}", e);
+                    tracing::info!("Error in fallback request {}", e);
                     return StatusCode::INTERNAL_SERVER_ERROR;
                 }
             }
