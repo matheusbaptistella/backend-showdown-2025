@@ -17,7 +17,7 @@ enum Command {
 // `oneshot::Sender` is a channel type that sends a **single** value. It is used
 // here to send the response received from the connection back to the original
 // requester.
-type Message = (Command, oneshot::Sender<Result<Option<Bytes>>>);
+type Message = (Command, oneshot::Sender<Result<Option<(u64, u64)>>>);
 
 async fn run(mut client: Client, mut rx: Receiver<Message>) {
     // Repeatedly pop messages from the channel. A return value of `None`
@@ -51,7 +51,7 @@ impl BufferedClient {
         BufferedClient { tx }
     }
 
-    pub async fn get(&mut self, from: Option<i64>, to: Option<i64>) -> Result<Option<Bytes>> {
+    pub async fn get(&mut self, from: Option<i64>, to: Option<i64>) -> Result<Option<(u64, u64)>> {
         // Initialize a new `Get` command to send via the channel.
         let get = Command::Get(from, to);
 

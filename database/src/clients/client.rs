@@ -10,10 +10,6 @@ pub struct Client {
     connection: Connection,
 }
 
-pub struct Message {
-    pub conent: Bytes,
-}
-
 impl Client {
     pub async fn connect<T: ToSocketAddrs>(addr: T) -> crate::Result<Client> {
         let socket = TcpStream::connect(addr).await?;
