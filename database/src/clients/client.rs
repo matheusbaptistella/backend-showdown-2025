@@ -25,7 +25,7 @@ impl Client {
         self.connection.write_frame(&frame).await?;
 
         match self.read_response().await? {
-            Frame::Array(ref frames) if frames.len() == 2 => {
+            Frame::Array(ref frames) if frames.len() == 4 => {
                 if let (Frame::Integer(d_count), Frame::Integer(d_total), Frame::Integer(f_count), Frame::Integer(f_total)) = (&frames[0], &frames[1], &frames[2], &frames[3]) {
                     Ok(Some(((*d_count, *d_total), (*f_count, *f_total))))
                 } else {

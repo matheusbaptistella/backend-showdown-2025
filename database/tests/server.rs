@@ -59,7 +59,7 @@ async fn key_value_get_set() {
     // Check for (2, 3980), (0, 0) return
     let mut response = [0; 23];
     stream.read_exact(&mut response).await.unwrap();
-    assert_eq!(b"*2\r\n:2\r\n:4080\r\n:0\r\n:0\r\n", &response);
+    assert_eq!(b"*4\r\n:2\r\n:4080\r\n:0\r\n:0\r\n", &response);
 
     // Ask for values from a timestamp that is greater than all the ones in the db
     stream

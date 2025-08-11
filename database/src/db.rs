@@ -48,7 +48,7 @@ impl Db {
 
     pub fn set(&self, instance: u8, timestamp: i64, amount: u64) {
         let mut state = self.shared.state.lock().unwrap();
-        if instance == 0{
+        if instance == b'0' {
             let entry = state.default.entry(timestamp).or_insert((0, 0));
             entry.0 += 1;
             entry.1 += amount;

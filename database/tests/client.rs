@@ -14,14 +14,14 @@ async fn key_value_get_set() {
     assert_eq!(res, Some(((0, 0), (0, 0))));
 
     // Set first value
-    client.set(0, 17231289881111, 1990).await.unwrap();
+    client.set(b'0', 17231289881111, 1990).await.unwrap();
 
     // Get: should be (1, 1990)
     let res = client.get(None, None).await.unwrap();
     assert_eq!(res, Some(((1, 1990), (0, 0))));
 
     // Set second value
-    client.set(0, 17231289882222, 2090).await.unwrap();
+    client.set(b'0', 17231289882222, 2090).await.unwrap();
 
     // Get: should be (2, 4080)
     let res = client.get(None, None).await.unwrap();

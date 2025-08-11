@@ -85,6 +85,10 @@ impl Frame {
                 let _ = get_timestamp(src)?;
                 Ok(())
             }
+            b'?' => {
+                let _ = get_u8(src)?;
+                skip(src, 2)
+            }
             b'$' => {
                 if b'-' == peek_u8(src)? {
                     // Skip '-1\r\n'
@@ -135,7 +139,8 @@ impl Frame {
                 Ok(Frame::Timestamp(len))
             }
             b'?' => {
-                let len = get_instance(src)?;
+                let len = get_u8(src)?;
+                skip(src, 2)?;
                 Ok(Frame::Instance(len))
             }
             b'$' => {
@@ -260,14 +265,6 @@ fn get_timestamp(src: &mut Cursor<&[u8]>) -> Result<i64, Error> {
     let line = get_line(src)?;
 
     atoi::<i64>(line).ok_or_else(|| "protocol error; invalid frame format".into())
-}
-
-fn get_instance(src: &mut Cursor<&[u8]>) -> Result<u8, Error> {
-    use atoi::atoi;
-
-    let line = get_line(src)?;
-
-    atoi::<u8>(line).ok_or_else(|| "protocol error; invalid frame format".into())
 }
 
 fn get_line<'a>(src: &mut Cursor<&'a [u8]>) -> Result<&'a [u8], Error> {

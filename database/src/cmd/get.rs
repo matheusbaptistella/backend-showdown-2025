@@ -62,7 +62,7 @@ impl Get {
                         let ts = parse.next_timestamp()?;
                         to = Some(ts);
                     }
-                    Ok(_) => return Err("current `SET` only supports the range oprions".into()),
+                    Ok(_) => return Err("current `SET` only supports the range opitions".into()),
                     Err(EndOfStream) => {},
                     Err(e) => return Err(e.into()),
                 }
