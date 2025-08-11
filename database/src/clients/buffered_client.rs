@@ -1,13 +1,12 @@
 use crate::clients::Client;
 use crate::Result;
 
-use bytes::Bytes;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::sync::oneshot;
 
 enum Command {
     Get(Option<i64>, Option<i64>),
-    Set(i64, u64),
+    Set(u8, i64, u64),
 }
 
 // Message type sent over the channel to the connection task.
@@ -17,7 +16,7 @@ enum Command {
 // `oneshot::Sender` is a channel type that sends a **single** value. It is used
 // here to send the response received from the connection back to the original
 // requester.
-type Message = (Command, oneshot::Sender<Result<Option<(u64, u64)>>>);
+type Message = (Command, oneshot::Sender<Result<Option<((u64, u64), (u64, u64))>>>);
 
 async fn run(mut client: Client, mut rx: Receiver<Message>) {
     // Repeatedly pop messages from the channel. A return value of `None`
@@ -26,7 +25,7 @@ async fn run(mut client: Client, mut rx: Receiver<Message>) {
     while let Some((cmd, tx)) = rx.recv().await {
         let response = match cmd {
             Command::Get(from, to) => client.get(from, to).await,
-            Command::Set(timestamp, amount) => client.set(timestamp, amount).await.map(|_| None),
+            Command::Set(instance, timestamp, amount) => client.set(instance, timestamp, amount).await.map(|_| None),
         };
 
         // Send the response back to the caller.
@@ -51,7 +50,7 @@ impl BufferedClient {
         BufferedClient { tx }
     }
 
-    pub async fn get(&mut self, from: Option<i64>, to: Option<i64>) -> Result<Option<(u64, u64)>> {
+    pub async fn get(&mut self, from: Option<i64>, to: Option<i64>) -> Result<Option<((u64, u64), (u64, u64))>> {
         // Initialize a new `Get` command to send via the channel.
         let get = Command::Get(from, to);
 
@@ -68,9 +67,9 @@ impl BufferedClient {
         }
     }
 
-    pub async fn set(&mut self, timestamp: i64, amount: u64) -> Result<()> {
+    pub async fn set(&mut self, instance: u8, timestamp: i64, amount: u64) -> Result<()> {
         // Initialize a new `Set` command to send via the channel.
-        let set = Command::Set(timestamp, amount);
+        let set = Command::Set(instance, timestamp, amount);
 
         // Initialize a new oneshot to be used to receive the response back from the connection.
         let (tx, rx) = oneshot::channel();

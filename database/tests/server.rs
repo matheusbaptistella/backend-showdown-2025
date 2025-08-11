@@ -3,7 +3,6 @@ use database::server;
 use std::net::SocketAddr;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::time::{self, Duration};
 
 #[tokio::test]
 async fn key_value_get_set() {
@@ -17,13 +16,13 @@ async fn key_value_get_set() {
         .await
         .unwrap();
 
-    // Check for 0, 0 return since the db has't processed any requests or amounts yet
-    let mut response = [0; 12];
+    // Check for (0, 0), (0, 0) return since the db has't processed any requests or amounts yet
+    let mut response = [0; 20];
     stream.read_exact(&mut response).await.unwrap();
-    assert_eq!(b"*2\r\n:0\r\n:0\r\n", &response);
+    assert_eq!(b"*4\r\n:0\r\n:0\r\n:0\r\n:0\r\n", &response);
 
     stream
-        .write_all(b"*3\r\n$3\r\nSET\r\n;17231289881111\r\n:1990\r\n")
+        .write_all(b"*4\r\n$3\r\nSET\r\n?0\r\n;17231289881111\r\n:1990\r\n")
         .await
         .unwrap();
 
@@ -37,13 +36,13 @@ async fn key_value_get_set() {
         .await
         .unwrap();
 
-    // Check for 1, 1990 return
-    let mut response = [0; 15];
+    // Check for (1, 1990), (0, 0) return
+    let mut response = [0; 23];
     stream.read_exact(&mut response).await.unwrap();
-    assert_eq!(b"*2\r\n:1\r\n:1990\r\n", &response);
+    assert_eq!(b"*4\r\n:1\r\n:1990\r\n:0\r\n:0\r\n", &response);
 
     stream
-        .write_all(b"*3\r\n$3\r\nSET\r\n;17231289882222\r\n:2090\r\n")
+        .write_all(b"*4\r\n$3\r\nSET\r\n?0\r\n;17231289882222\r\n:2090\r\n")
         .await
         .unwrap();
 
@@ -57,10 +56,10 @@ async fn key_value_get_set() {
         .await
         .unwrap();
 
-    // Check for 2, 3980 return
-    let mut response = [0; 15];
+    // Check for (2, 3980), (0, 0) return
+    let mut response = [0; 23];
     stream.read_exact(&mut response).await.unwrap();
-    assert_eq!(b"*2\r\n:2\r\n:4080\r\n", &response);
+    assert_eq!(b"*2\r\n:2\r\n:4080\r\n:0\r\n:0\r\n", &response);
 
     // Ask for values from a timestamp that is greater than all the ones in the db
     stream
@@ -68,10 +67,10 @@ async fn key_value_get_set() {
         .await
         .unwrap();
 
-    // Check for 0, 0 return since the db has't processed any requests or amounts yet
-    let mut response = [0; 12];
+    // Check for (0, 0), (0, 0) return since the db has't processed any requests or amounts yet
+    let mut response = [0; 20];
     stream.read_exact(&mut response).await.unwrap();
-    assert_eq!(b"*2\r\n:0\r\n:0\r\n", &response);
+    assert_eq!(b"*4\r\n:0\r\n:0\r\n:0\r\n:0\r\n", &response);
 
     // Ask for values to a timestamp that is smaller than all the ones in the db
     stream
@@ -80,9 +79,9 @@ async fn key_value_get_set() {
         .unwrap();
 
     // Check for 0, 0 return since the db has't processed any requests or amounts yet
-    let mut response = [0; 12];
+    let mut response = [0; 20];
     stream.read_exact(&mut response).await.unwrap();
-    assert_eq!(b"*2\r\n:0\r\n:0\r\n", &response);
+    assert_eq!(b"*4\r\n:0\r\n:0\r\n:0\r\n:0\r\n", &response);
 
     // Ask for values to a timestamp that is in between the ones in the db
     stream
@@ -91,9 +90,9 @@ async fn key_value_get_set() {
         .unwrap();
 
     // Check for 0, 0 return since the db has't processed any requests or amounts yet
-    let mut response = [0; 12];
+    let mut response = [0; 20];
     stream.read_exact(&mut response).await.unwrap();
-    assert_eq!(b"*2\r\n:0\r\n:0\r\n", &response);
+    assert_eq!(b"*4\r\n:0\r\n:0\r\n:0\r\n:0\r\n", &response);
 
     // Only first transaction
     stream
@@ -102,9 +101,9 @@ async fn key_value_get_set() {
         .unwrap();
 
     // Check for 1, 1990 return
-    let mut response = [0; 15];
+    let mut response = [0; 23];
     stream.read_exact(&mut response).await.unwrap();
-    assert_eq!(b"*2\r\n:1\r\n:1990\r\n", &response);
+    assert_eq!(b"*4\r\n:1\r\n:1990\r\n:0\r\n:0\r\n", &response);
 
     // Only second transaction
     stream
@@ -113,9 +112,9 @@ async fn key_value_get_set() {
         .unwrap();
 
     // Check for 1, 2090 return
-    let mut response = [0; 15];
+    let mut response = [0; 23];
     stream.read_exact(&mut response).await.unwrap();
-    assert_eq!(b"*2\r\n:1\r\n:2090\r\n", &response);
+    assert_eq!(b"*4\r\n:1\r\n:2090\r\n:0\r\n:0\r\n", &response);
 }
 
 async fn start_server() -> SocketAddr {

@@ -76,6 +76,13 @@ impl Parse {
         }
     }
 
+    pub fn next_instance(&mut self) -> Result<u8, ParseError> {
+        match self.next()? {
+            Frame::Instance(t) => Ok(t),
+            frame => Err(format!("protocol error; expected i64 frame but got {:?}", frame).into()),
+        }
+    }
+
     pub fn finish(&mut self) -> Result<(), ParseError> {
         if self.parts.next().is_none() {
             Ok(())

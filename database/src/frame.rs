@@ -12,6 +12,7 @@ pub enum Frame {
     Error(String),
     Integer(u64),
     Timestamp(i64),
+    Instance(u8),
     Bulk(Bytes),
     Null,
     Array(Vec<Frame>),
@@ -36,6 +37,15 @@ impl Frame {
                 vec.push(Frame::Bulk(bytes));
             }
             _ => panic!("not an array frame"),
+        }
+    }
+
+    pub fn push_instance(&mut self, value: u8) {
+        match self {
+            Frame::Array(vec) => {
+                vec.push(Frame::Instance(value));
+            }
+            _ => panic!("not an array frame")
         }
     }
 
@@ -124,6 +134,10 @@ impl Frame {
                 let len = get_timestamp(src)?;
                 Ok(Frame::Timestamp(len))
             }
+            b'?' => {
+                let len = get_instance(src)?;
+                Ok(Frame::Instance(len))
+            }
             b'$' => {
                 if b'-' == peek_u8(src)? {
                     let line = get_line(src)?;
@@ -186,6 +200,7 @@ impl fmt::Display for Frame {
             Frame::Error(msg) => write!(fmt, "error: {}", msg),
             Frame::Integer(num) => num.fmt(fmt),
             Frame::Timestamp(ts) => ts.fmt(fmt),
+            Frame::Instance(inst) => inst.fmt(fmt),
             Frame::Bulk(msg) => match str::from_utf8(msg) {
                 Ok(string) => string.fmt(fmt),
                 Err(_) => write!(fmt, "{:?}", msg),
@@ -245,6 +260,14 @@ fn get_timestamp(src: &mut Cursor<&[u8]>) -> Result<i64, Error> {
     let line = get_line(src)?;
 
     atoi::<i64>(line).ok_or_else(|| "protocol error; invalid frame format".into())
+}
+
+fn get_instance(src: &mut Cursor<&[u8]>) -> Result<u8, Error> {
+    use atoi::atoi;
+
+    let line = get_line(src)?;
+
+    atoi::<u8>(line).ok_or_else(|| "protocol error; invalid frame format".into())
 }
 
 fn get_line<'a>(src: &mut Cursor<&'a [u8]>) -> Result<&'a [u8], Error> {

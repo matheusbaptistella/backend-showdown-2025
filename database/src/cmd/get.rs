@@ -35,7 +35,7 @@ impl Get {
     ///
     /// # Returns
     ///
-    /// Returns two u64 integers COUNT and TOTAL. If the frame is malformed, `Err` is
+    /// Returns two tuples of u64 integers COUNT and TOTAL for the DEFAULT and FALLBACK instances. If the frame is malformed, `Err` is
     /// returned.
     ///
     /// # Format
@@ -85,10 +85,12 @@ impl Get {
     /// to execute a received command.
     pub async fn apply(self, db: &Db, dst: &mut Connection) -> crate::Result<()> {
         // Get the value from the shared database state
-        let (count, total) = db.get(self.from, self.to);
+        let ((d_count, d_total), (f_count, f_total)) = db.get(self.from, self.to);
         let mut response = Frame::array();
-        response.push_int(count);     
-        response.push_int(total);    
+        response.push_int(d_count);     
+        response.push_int(d_total);
+        response.push_int(f_count);     
+        response.push_int(f_total);    
 
         dst.write_frame(&response).await?;
 

@@ -92,6 +92,11 @@ impl Connection {
                 self.stream.write_u8(b';').await?;
                 self.write_timestamp(*val).await?
             }
+            Frame::Instance(val) => {
+                self.stream.write_u8(b'?').await?;
+                self.stream.write_u8(*val).await?;
+                self.stream.write_all(b"\r\n").await?;
+            }
             Frame::Null => {
                 self.stream.write_all(b"$-1\r\n").await?;
             }

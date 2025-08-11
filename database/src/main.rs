@@ -1,32 +1,14 @@
-use tokio::net::{TcpListener, TcpStream};
-use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
+use database::{server, DEFAULT_PORT};
 
-type Db = Arc<Mutex<BTreeMap<i64, u64>>>;
+use tokio::net::TcpListener;
+use tokio::signal;
+
 
 #[tokio::main]
-async fn main() {
-    let listener = TcpListener::bind("0.0.0.0:6379").await.unwrap();
+pub async fn main() -> database::Result<()> {
+    let listener = TcpListener::bind(&format!("127.0.0.1:{}", DEFAULT_PORT)).await?;
 
-    let db: Db = Arc::new(Mutex::new(BTreeMap::new()));
+    server::run(listener, signal::ctrl_c()).await;
 
-    loop {
-        let (socket, _) = listener.accept().await.unwrap();
-
-        let db = db.clone();
-
-        tokio::spawn(async move {
-            process(socket, db).await;
-        });
-    }
-}
-
-
-async fn process(socket: TcpStream, db: Db) {
-    let stream = tokio::io::BufWriter::new(socket);
-
-    let buffer = bytes::BytesMut::with_capacity(1024);
-
-    loop {
-    }
+    Ok(())
 }
