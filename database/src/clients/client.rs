@@ -31,8 +31,13 @@ impl Client {
         self.connection.write_frame(&frame).await?;
 
         match self.read_response().await? {
-            Frame::Array(frame) => // How can I extraect the integers Count and Total
-            },
+            Frame::Array(ref frames) if frames.len() == 2 => {
+                if let (Frame::Integer(count), Frame::Integer(total)) = (&frames[0], &frames[1]) {
+                    Ok(Some((*count, *total)))
+                } else {
+                    Err("Invalid frame types for count and total".into())
+                }
+            }
             Frame::Null => Ok(None),
             frame => Err(frame.to_error()),
         }
