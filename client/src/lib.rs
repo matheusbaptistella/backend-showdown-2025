@@ -1,11 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-pub enum Command {
-    Get(Option<i64>, Option<i64>),
-    Set(i64, u64),
-}
-
 #[derive(Deserialize, Serialize)]
 pub struct CreatePayment {
     #[serde(rename = "correlationId")]
@@ -38,7 +33,7 @@ pub struct PaymentProcessorsSummaries {
 #[derive(Serialize)]
 pub struct Summary {
     #[serde(rename = "totalRequests")]
-    pub total_requests: usize,
+    pub total_requests: u64,
     #[serde(rename = "totalAmount")]
     pub total_amount: f64,
 }
