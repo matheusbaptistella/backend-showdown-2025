@@ -1,6 +1,11 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+pub enum Command {
+    Get(Option<i64>, Option<i64>),
+    Set(i64, u64),
+}
+
 #[derive(Deserialize, Serialize)]
 pub struct CreatePayment {
     #[serde(rename = "correlationId")]
