@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use backend_showdown_2025::{
+use client::{
     CreatePayment, PaymentProcessorsSummaries, PaymentsSummaryQueryParams, RequestPayment, Summary
 };
 

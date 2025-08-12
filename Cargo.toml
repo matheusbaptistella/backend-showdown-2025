@@ -1,4 +1,5 @@
 [workspace]
+reolver = "3"
 members = [
     "client",
     "database",
