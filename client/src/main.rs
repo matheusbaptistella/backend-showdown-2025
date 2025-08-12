@@ -71,7 +71,7 @@ async fn run_dispatcher(mut rx: mpsc::Receiver<RequestPayment>, state: AppState)
         let st = state.clone();
         tokio::spawn(async move {
             let _permit = permit;
-            process_payment(job, &st);
+            process_payment(job, &st).await;
         });
     }
 }

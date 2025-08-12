@@ -43,14 +43,14 @@ pub struct BufferedClient {
 
 impl BufferedClient {
     pub fn buffer(client: Client) -> BufferedClient {
-        let (tx, rx) = channel(32);
+        let (tx, rx) = channel(1024);
 
         tokio::spawn(async move { run(client, rx).await });
 
         BufferedClient { tx }
     }
 
-    pub async fn get(&mut self, from: Option<i64>, to: Option<i64>) -> Result<Option<((u64, u64), (u64, u64))>> {
+    pub async fn get(&self, from: Option<i64>, to: Option<i64>) -> Result<Option<((u64, u64), (u64, u64))>> {
         // Initialize a new `Get` command to send via the channel.
         let get = Command::Get(from, to);
 
@@ -67,7 +67,7 @@ impl BufferedClient {
         }
     }
 
-    pub async fn set(&mut self, instance: u8, timestamp: i64, amount: u64) -> Result<()> {
+    pub async fn set(&self, instance: u8, timestamp: i64, amount: u64) -> Result<()> {
         // Initialize a new `Set` command to send via the channel.
         let set = Command::Set(instance, timestamp, amount);
 
