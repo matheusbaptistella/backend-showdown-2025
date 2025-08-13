@@ -43,7 +43,7 @@ pub struct BufferedClient {
 
 impl BufferedClient {
     pub fn buffer(client: Client) -> BufferedClient {
-        let (tx, rx) = channel(1024);
+        let (tx, rx) = channel(10240);
 
         tokio::spawn(async move { run(client, rx).await });
 

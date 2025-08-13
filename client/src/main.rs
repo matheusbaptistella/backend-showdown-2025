@@ -27,7 +27,7 @@ struct AppState {
 
 #[tokio::main]
 async fn main() {
-    let (tx, rx) = mpsc::channel::<RequestPayment>(1024);
+    let (tx, rx) = mpsc::channel::<RequestPayment>(10240);
 
     let db_client = database::Client::connect(&format!("database:{}", DEFAULT_PORT)).await.unwrap();
 
@@ -35,7 +35,7 @@ async fn main() {
 
     let appstate = AppState {
         queue_tx: tx.clone(),
-        concurrency: Arc::new(Semaphore::new(200)),
+        concurrency: Arc::new(Semaphore::new(2000)),
         http: reqwest::Client::builder()
             .tcp_nodelay(true)
             .build()
@@ -78,18 +78,26 @@ async fn run_dispatcher(mut rx: mpsc::Receiver<RequestPayment>, state: AppState)
 
 
 async fn process_payment(job: RequestPayment, state: &AppState) {
-    let resp = state.http
-        .post("http://payment-processor-default:8080/payments")
-        .json(&job)
-        .send()
-        .await
-        .unwrap();
+    loop {
+        let resp = state.http
+            .post("http://payment-processor-default:8080/payments")
+            .json(&job)
+            .send()
+            .await
+            .unwrap();
 
-    if !resp.status().is_client_error() && !resp.status().is_client_error() {
-        let timestamp = job.requested_at.timestamp_millis();
-        let amount = (job.amount * 100.0) as u64;
+        if resp.status().is_server_error() {
+            continue;
+        }
 
-        state.db.set(b'0', timestamp, amount).await.unwrap();
+        if resp.status().is_success() {
+            let timestamp = job.requested_at.timestamp_millis();
+            let amount = (job.amount * 100.0) as u64;
+
+            state.db.set(b'0', timestamp, amount).await.unwrap();
+        }
+
+        break;
     }
 }
 
