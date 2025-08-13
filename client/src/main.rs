@@ -29,7 +29,7 @@ struct AppState {
 async fn main() {
     let (tx, rx) = mpsc::channel::<RequestPayment>(1024);
 
-    let db_client = database::Client::connect(&format!("127.0.0.1:{}", DEFAULT_PORT)).await.unwrap();
+    let db_client = database::Client::connect(&format!("database:{}", DEFAULT_PORT)).await.unwrap();
 
     let db = database::BufferedClient::buffer(db_client);
 
@@ -78,17 +78,19 @@ async fn run_dispatcher(mut rx: mpsc::Receiver<RequestPayment>, state: AppState)
 
 
 async fn process_payment(job: RequestPayment, state: &AppState) {
-    let _ = state.http
+    let resp = state.http
         .post("http://payment-processor-default:8080/payments")
         .json(&job)
         .send()
         .await
         .unwrap();
 
-    let timestamp = job.requested_at.timestamp_millis();
-    let amount = (job.amount * 100.0) as u64;
+    if !resp.status().is_client_error() && !resp.status().is_client_error() {
+        let timestamp = job.requested_at.timestamp_millis();
+        let amount = (job.amount * 100.0) as u64;
 
-    state.db.set(b'0', timestamp, amount).await.unwrap();
+        state.db.set(b'0', timestamp, amount).await.unwrap();
+    }
 }
 
 
