@@ -9,30 +9,21 @@ enum Command {
     Set(u8, i64, u64),
 }
 
-// Message type sent over the channel to the connection task.
-//
-// `Command` is the command to forward to the connection.
-//
-// `oneshot::Sender` is a channel type that sends a **single** value. It is used
-// here to send the response received from the connection back to the original
-// requester.
-type Message = (Command, oneshot::Sender<Result<Option<((u64, u64), (u64, u64))>>>);
+type Message = (Command, Option<oneshot::Sender<Result<Option<((u64, u64), (u64, u64))>>>>);
 
 async fn run(mut client: Client, mut rx: Receiver<Message>) {
-    // Repeatedly pop messages from the channel. A return value of `None`
-    // indicates that all `BufferedClient` handles have dropped and there will never be
-    // another message sent on the channel.
-    while let Some((cmd, tx)) = rx.recv().await {
+    while let Some((cmd, tx_opt)) = rx.recv().await {
         let response = match cmd {
             Command::Get(from, to) => client.get(from, to).await,
-            Command::Set(instance, timestamp, amount) => client.set(instance, timestamp, amount).await.map(|_| None),
+            Command::Set(instance, timestamp, amount) => {
+                client.set(instance, timestamp, amount).await.unwrap();
+                Ok(None)
+            },
         };
-
-        // Send the response back to the caller.
-        //
-        // Failing to send the message indicates the `rx` half dropped
-        // before receiving the message. This is a normal runtime event.
-        let _ = tx.send(response);
+        
+        if let Some(tx) = tx_opt {
+            let _ = tx.send(response);
+        }
     }
 }
 
@@ -51,14 +42,13 @@ impl BufferedClient {
     }
 
     pub async fn get(&self, from: Option<i64>, to: Option<i64>) -> Result<Option<((u64, u64), (u64, u64))>> {
-        // Initialize a new `Get` command to send via the channel.
         let get = Command::Get(from, to);
 
         // Initialize a new oneshot to be used to receive the response back from the connection.
         let (tx, rx) = oneshot::channel();
 
         // Send the request
-        self.tx.send((get, tx)).await?;
+        self.tx.send((get, Some(tx))).await?;
 
         // Await the response
         match rx.await {
@@ -67,20 +57,7 @@ impl BufferedClient {
         }
     }
 
-    pub async fn set(&self, instance: u8, timestamp: i64, amount: u64) -> Result<()> {
-        // Initialize a new `Set` command to send via the channel.
-        let set = Command::Set(instance, timestamp, amount);
-
-        // Initialize a new oneshot to be used to receive the response back from the connection.
-        let (tx, rx) = oneshot::channel();
-
-        // Send the request
-        self.tx.send((set, tx)).await?;
-
-        // Await the response
-        match rx.await {
-            Ok(res) => res.map(|_| ()),
-            Err(err) => Err(err.into()),
-        }
+    pub async fn set(&self, instance: u8, timestamp: i64, amount: u64) {
+        let _ = self.tx.send((Command::Set(instance, timestamp, amount), None)).await.unwrap();
     }
 }

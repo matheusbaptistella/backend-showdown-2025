@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use client::{
     CreatePayment, PaymentProcessorsSummaries, PaymentsSummaryQueryParams, RequestPayment, Summary
@@ -16,10 +16,15 @@ use database::{BufferedClient, DEFAULT_PORT};
 
 use tokio::sync::{mpsc, Semaphore};
 
+#[derive(Clone, Copy)]
+enum Processor { Default, Fallback }
+
 #[derive(Clone)]
 struct AppState {
     queue_tx: mpsc::Sender<RequestPayment>,
     concurrency: Arc<Semaphore>,
+    // sem_default: Arc<Semaphore>,
+    // sem_fallback: Arc<Semaphore>,
     http: reqwest::Client,
     db: BufferedClient,
 }
@@ -36,6 +41,8 @@ async fn main() {
     let appstate = AppState {
         queue_tx: tx.clone(),
         concurrency: Arc::new(Semaphore::new(2000)),
+        // sem_default: Arc::new(Semaphore::new(1800)),
+        // sem_fallback: Arc::new(Semaphore::new(200)),
         http: reqwest::Client::builder()
             .tcp_nodelay(true)
             .build()
@@ -62,6 +69,9 @@ async fn main() {
 
 
 async fn run_dispatcher(mut rx: mpsc::Receiver<RequestPayment>, state: AppState) {
+    // const CONGESTION_DETECT: Duration = Duration::from_millis(500);
+    // const RELIEF_TH: f64 = 0.10;
+    // const PROBE_RATIO: u64 = 20; 
     while let Some(job) = rx.recv().await {
         let permit = match state.concurrency.clone().acquire_owned().await {
             Ok(p) => p,
@@ -71,22 +81,48 @@ async fn run_dispatcher(mut rx: mpsc::Receiver<RequestPayment>, state: AppState)
         let st = state.clone();
         tokio::spawn(async move {
             let _permit = permit;
-            process_payment(job, &st).await;
+            process_payment(job, Processor::Default, &st).await;
         });
     }
 }
 
 
-async fn process_payment(job: RequestPayment, state: &AppState) {
+async fn process_payment(job: RequestPayment, processor: Processor, state: &AppState) {
+    let (mut bucket, mut url) = match processor {
+        Processor::Default => (b'0', "http://payment-processor-default:8080/payments"),
+        Processor::Fallback => (b'1', "http://payment-processor-fallback:8080/payments"),
+    };
+    let mut retry = false;
+
     loop {
         let resp = state.http
-            .post("http://payment-processor-default:8080/payments")
+            .post(url)
             .json(&job)
             .send()
             .await
             .unwrap();
 
         if resp.status().is_server_error() {
+            retry = true;
+            (bucket, url) = match processor {
+                Processor::Default => (b'1', "http://payment-processor-fallback:8080/payments"),
+                Processor::Fallback => ( b'0', "http://payment-processor-default:8080/payments"),
+            };
+
+            continue;
+        }
+
+        if resp.status().is_client_error() {
+            if retry {
+                break;
+            }
+            
+            retry = true;
+            (bucket, url) = match processor {
+                Processor::Default => (b'1', "http://payment-processor-fallback:8080/payments"),
+                Processor::Fallback => ( b'0', "http://payment-processor-default:8080/payments"),
+            };
+
             continue;
         }
 
@@ -94,7 +130,7 @@ async fn process_payment(job: RequestPayment, state: &AppState) {
             let timestamp = job.requested_at.timestamp_millis();
             let amount = (job.amount * 100.0) as u64;
 
-            state.db.set(b'0', timestamp, amount).await.unwrap();
+            state.db.set(bucket, timestamp, amount).await;
         }
 
         break;
