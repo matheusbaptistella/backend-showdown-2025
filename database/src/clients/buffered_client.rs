@@ -27,14 +27,14 @@ async fn run(mut client: Client, mut rx: Receiver<Message>) {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct BufferedClient {
     tx: Sender<Message>,
 }
 
 impl BufferedClient {
     pub fn buffer(client: Client) -> BufferedClient {
-        let (tx, rx) = channel(10240);
+        let (tx, rx) = channel(32);
 
         tokio::spawn(async move { run(client, rx).await });
 

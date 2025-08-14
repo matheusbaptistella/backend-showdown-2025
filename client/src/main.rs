@@ -16,15 +16,16 @@ use database::{BufferedClient, DEFAULT_PORT};
 
 use tokio::sync::{mpsc, Semaphore};
 
-#[derive(Clone, Copy)]
+use tracing::Instrument;
+use tracing_subscriber::FmtSubscriber;
+
+#[derive(Clone, Copy, Debug)]
 enum Processor { Default, Fallback }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct AppState {
     queue_tx: mpsc::Sender<RequestPayment>,
     concurrency: Arc<Semaphore>,
-    // sem_default: Arc<Semaphore>,
-    // sem_fallback: Arc<Semaphore>,
     http: reqwest::Client,
     db: BufferedClient,
 }
@@ -32,7 +33,7 @@ struct AppState {
 
 #[tokio::main]
 async fn main() {
-    let (tx, rx) = mpsc::channel::<RequestPayment>(10240);
+    let (tx, rx) = mpsc::channel::<RequestPayment>(4096);
 
     let db_client = database::Client::connect(&format!("database:{}", DEFAULT_PORT)).await.unwrap();
 
@@ -40,9 +41,7 @@ async fn main() {
 
     let appstate = AppState {
         queue_tx: tx.clone(),
-        concurrency: Arc::new(Semaphore::new(2000)),
-        // sem_default: Arc::new(Semaphore::new(1800)),
-        // sem_fallback: Arc::new(Semaphore::new(200)),
+        concurrency: Arc::new(Semaphore::new(16)),
         http: reqwest::Client::builder()
             .tcp_nodelay(true)
             .build()
@@ -69,9 +68,6 @@ async fn main() {
 
 
 async fn run_dispatcher(mut rx: mpsc::Receiver<RequestPayment>, state: AppState) {
-    // const CONGESTION_DETECT: Duration = Duration::from_millis(500);
-    // const RELIEF_TH: f64 = 0.10;
-    // const PROBE_RATIO: u64 = 20; 
     while let Some(job) = rx.recv().await {
         let permit = match state.concurrency.clone().acquire_owned().await {
             Ok(p) => p,
@@ -85,7 +81,6 @@ async fn run_dispatcher(mut rx: mpsc::Receiver<RequestPayment>, state: AppState)
         });
     }
 }
-
 
 async fn process_payment(job: RequestPayment, processor: Processor, state: &AppState) {
     let (mut bucket, mut url) = match processor {
@@ -137,7 +132,6 @@ async fn process_payment(job: RequestPayment, processor: Processor, state: &AppS
     }
 }
 
-
 async fn payments(
     State(appstate): State<AppState>,
     Json(cp): Json<CreatePayment>,
@@ -150,7 +144,6 @@ async fn payments(
 
     appstate.queue_tx.send(rp).await.unwrap();
 }
-
 
 async fn payments_summary(
     State(appstate): State<AppState>,
