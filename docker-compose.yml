@@ -17,10 +17,7 @@ services:
           memory: "32MB"
 
   api1: &api
-    build:
-      context: .
-      dockerfile: client/Dockerfile
-      target: final
+    image: matheusbaptistella/client-rs:latest
     hostname: api1
     expose:
       - 3000
@@ -41,10 +38,7 @@ services:
     hostname: api2
 
   database:
-    build:
-      context: .
-      dockerfile: database/Dockerfile
-      target: final
+    image: matheusbaptistella/database-rs:latest
     hostname: database
     expose:
       - 6379
