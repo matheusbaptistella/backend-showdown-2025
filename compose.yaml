@@ -23,6 +23,8 @@ services:
     hostname: api1
     expose:
       - 3000
+    environment:
+      - PEER_URL=http://api2:3000
     networks:
       - backend
       - payment-processor
@@ -35,6 +37,8 @@ services:
   api2:
     <<: *api
     hostname: api2
+    environment:
+      - PEER_URL=http://api1:3000
 
 networks:
   backend:

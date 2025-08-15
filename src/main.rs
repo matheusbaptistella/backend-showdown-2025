@@ -24,6 +24,7 @@ struct AppState {
     http: reqwest::Client,
     default_db: DbHandle,
     fallback_db: DbHandle,
+    peer_url: String,
 }
 
 #[tokio::main]
@@ -32,6 +33,8 @@ async fn main() {
 
     let default_db = DbHandle::new(Db::new());
     let fallback_db = DbHandle::new(Db::new());
+
+    let peer_url = std::env::var("PEER_URL").ok().unwrap();
 
     let appstate = AppState {
         queue_tx: tx.clone(),
@@ -42,6 +45,7 @@ async fn main() {
             .unwrap(),
         default_db,
         fallback_db,
+        peer_url,
     };
 
     let dispatcher_state = appstate.clone();
@@ -50,6 +54,7 @@ async fn main() {
     let app = Router::new()
         .route("/payments", post(payments))
         .route("/payments-summary", get(payments_summary))
+        .route("/payments-summary/local", get(payments_summary_local))
         .with_state(appstate);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
@@ -111,20 +116,7 @@ async fn process_payment(job: RequestPayment, state: &AppState) {
     }
 }
 
-async fn payments(State(appstate): State<AppState>, Json(cp): Json<CreatePayment>) {
-    let rp = RequestPayment {
-        correlation_id: cp.correlation_id,
-        amount: cp.amount,
-        requested_at: Utc::now(),
-    };
-
-    appstate.queue_tx.send(rp).await.unwrap();
-}
-
-async fn payments_summary(
-    State(appstate): State<AppState>,
-    Query(params): Query<PaymentsSummaryQueryParams>,
-) -> impl IntoResponse {
+async fn summarize_local(appstate: &AppState, params: &PaymentsSummaryQueryParams) -> PaymentProcessorsSummaries {
     let from = params.from.map(|dt| dt.timestamp_millis());
     let to = params.to.map(|dt| dt.timestamp_millis());
 
@@ -141,8 +133,42 @@ async fn payments_summary(
         total_amount: f_total as f64 / 100.0,
     };
 
-    Json(PaymentProcessorsSummaries {
-        default_sum,
-        fallback,
-    })
+    PaymentProcessorsSummaries {default_sum, fallback }
+}
+
+async fn payments(State(appstate): State<AppState>, Json(cp): Json<CreatePayment>) {
+    let rp = RequestPayment {
+        correlation_id: cp.correlation_id,
+        amount: cp.amount,
+        requested_at: Utc::now(),
+    };
+
+    appstate.queue_tx.send(rp).await.unwrap();
+}
+
+async fn payments_summary_local(
+    State(appstate): State<AppState>,
+    Query(params): Query<PaymentsSummaryQueryParams>,
+) -> impl IntoResponse {
+    Json(summarize_local(&appstate, &params).await)
+}
+
+async fn payments_summary(
+    State(appstate): State<AppState>,
+    Query(params): Query<PaymentsSummaryQueryParams>,
+) -> impl IntoResponse {
+    let mut total = summarize_local(&appstate, &params).await;
+
+    let endpoint = format!("{}/payments-summary/local", appstate.peer_url.trim_end_matches('/'));
+
+    let resp = appstate.http.get(endpoint).query(&params).send().await.unwrap();
+
+    let data = resp.json::<PaymentProcessorsSummaries>().await.unwrap();
+
+    total.default_sum.total_amount += data.default_sum.total_amount;
+    total.default_sum.total_requests += data.default_sum.total_requests;
+    total.fallback.total_amount += data.fallback.total_amount;
+    total.fallback.total_requests += data.fallback.total_requests;
+
+    Json(total)
 }

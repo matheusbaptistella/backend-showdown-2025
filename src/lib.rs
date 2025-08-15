@@ -1,14 +1,14 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Deserialize, Serialize)]
 pub struct CreatePayment {
     #[serde(rename = "correlationId")]
     pub correlation_id: String,
     pub amount: f64,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Serialize)]
 pub struct RequestPayment {
     #[serde(rename = "correlationId")]
     pub correlation_id: String,
@@ -17,20 +17,20 @@ pub struct RequestPayment {
     pub requested_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize, Serialize)]
 pub struct PaymentsSummaryQueryParams {
     pub from: Option<DateTime<Utc>>,
     pub to: Option<DateTime<Utc>>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Deserialize, Serialize)]
 pub struct PaymentProcessorsSummaries {
     #[serde(rename = "default")]
     pub default_sum: Summary,
     pub fallback: Summary,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Deserialize, Serialize)]
 pub struct Summary {
     #[serde(rename = "totalRequests")]
     pub total_requests: u64,
