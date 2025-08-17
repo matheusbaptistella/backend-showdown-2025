@@ -10,6 +10,8 @@ use client_full::{
     RequestPayment, Summary,
 };
 use std::sync::Arc;
+use std::time::Duration;
+
 use tokio::sync::{Semaphore, mpsc};
 
 enum Processor {
@@ -80,57 +82,46 @@ async fn run_dispatcher(mut rx: mpsc::Receiver<RequestPayment>, state: AppState)
 }
 
 async fn process_payment(job: RequestPayment, state: &AppState) {
-    // let mut processor = Processor::Default;
-    let url = "http://payment-processor-default:8080/payments";
+    let mut processor = Processor::Default;
     let mut id_retry = false;
+    let mut retries = 10;
 
     loop {
-       let resp = state.http.post(url).json(&job).send().await.unwrap(); 
+        let url = match processor {
+            Processor::Default => "http://payment-processor-default:8080/payments",
+            Processor::Fallback => "http://payment-processor-fallback:8080/payments",
+        };
 
-        if resp.status().is_success() {
+        let status = state.http.post(url).json(&job).send().await.unwrap().status();
+
+        if status.is_success() {
             let timestamp = job.requested_at.timestamp_millis();
             let amount = (job.amount * 100.0) as u64;
 
-            state.default_db.set(timestamp, amount).await;
+            match processor {
+                Processor::Default => state.default_db.set(timestamp, amount).await,
+                Processor::Fallback => state.fallback_db.set(timestamp, amount).await,
+            }
 
             break;
         }
-        else if resp.status().is_client_error() {
-            break;
+        else if status.is_client_error() {
+            if id_retry {
+                break;
+            }
+            id_retry = true;
         }
+        else if status.is_server_error() && retries > 0 {
+            retries -= 1;
+            tokio::time::sleep(Duration::from_millis(40)).await;
+            continue;
+        }
+
+        (retries, processor) = match processor {
+            Processor::Default => (0, Processor::Fallback),
+            _ => (2, Processor::Default),
+        };
     }
-
-    // loop {
-    //     let url = match processor {
-    //         Processor::Default => "http://payment-processor-default:8080/payments",
-    //         Processor::Fallback => "http://payment-processor-fallback:8080/payments",
-    //     };
-
-    //     let resp = state.http.post(url).json(&job).send().await.unwrap();
-
-    //     if resp.status().is_success() {
-    //         let timestamp = job.requested_at.timestamp_millis();
-    //         let amount = (job.amount * 100.0) as u64;
-
-    //         match processor {
-    //             Processor::Default => state.default_db.set(timestamp, amount).await,
-    //             Processor::Fallback => state.default_db.set(timestamp, amount).await,
-    //         }
-
-    //         break;
-    //     }
-    //     else if resp.status().is_client_error() {
-    //         if id_retry {
-    //             break;
-    //         }
-    //         id_retry = true;
-    //     }
-
-    //     processor = match processor {
-    //         Processor::Default => Processor::Fallback,
-    //         _ => Processor::Default,
-    //     };
-    // }
 }
 
 async fn summarize_local(appstate: &AppState, params: &PaymentsSummaryQueryParams) -> PaymentProcessorsSummaries {
