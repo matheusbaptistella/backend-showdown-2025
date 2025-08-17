@@ -29,7 +29,7 @@ struct AppState {
 
 #[tokio::main]
 async fn main() {
-    let (tx, rx) = mpsc::channel::<RequestPayment>(4096);
+    let (tx, rx) = mpsc::channel::<RequestPayment>(8192);
 
     let default_db = DbHandle::new(Db::new());
     let fallback_db = DbHandle::new(Db::new());
@@ -80,40 +80,57 @@ async fn run_dispatcher(mut rx: mpsc::Receiver<RequestPayment>, state: AppState)
 }
 
 async fn process_payment(job: RequestPayment, state: &AppState) {
-    let mut processor = Processor::Default;
+    // let mut processor = Processor::Default;
+    let url = "http://payment-processor-default:8080/payments";
     let mut id_retry = false;
 
     loop {
-        let url = match processor {
-            Processor::Default => "http://payment-processor-default:8080/payments",
-            Processor::Fallback => "http://payment-processor-fallback:8080/payments",
-        };
-
-        let resp = state.http.post(url).json(&job).send().await.unwrap();
+       let resp = state.http.post(url).json(&job).send().await.unwrap(); 
 
         if resp.status().is_success() {
             let timestamp = job.requested_at.timestamp_millis();
             let amount = (job.amount * 100.0) as u64;
 
-            match processor {
-                Processor::Default => state.default_db.set(timestamp, amount).await,
-                Processor::Fallback => state.default_db.set(timestamp, amount).await,
-            }
+            state.default_db.set(timestamp, amount).await;
 
             break;
         }
         else if resp.status().is_client_error() {
-            if id_retry {
-                break;
-            }
-            id_retry = true;
+            break;
         }
-
-        processor = match processor {
-            Processor::Default => Processor::Fallback,
-            _ => Processor::Default,
-        };
     }
+
+    // loop {
+    //     let url = match processor {
+    //         Processor::Default => "http://payment-processor-default:8080/payments",
+    //         Processor::Fallback => "http://payment-processor-fallback:8080/payments",
+    //     };
+
+    //     let resp = state.http.post(url).json(&job).send().await.unwrap();
+
+    //     if resp.status().is_success() {
+    //         let timestamp = job.requested_at.timestamp_millis();
+    //         let amount = (job.amount * 100.0) as u64;
+
+    //         match processor {
+    //             Processor::Default => state.default_db.set(timestamp, amount).await,
+    //             Processor::Fallback => state.default_db.set(timestamp, amount).await,
+    //         }
+
+    //         break;
+    //     }
+    //     else if resp.status().is_client_error() {
+    //         if id_retry {
+    //             break;
+    //         }
+    //         id_retry = true;
+    //     }
+
+    //     processor = match processor {
+    //         Processor::Default => Processor::Fallback,
+    //         _ => Processor::Default,
+    //     };
+    // }
 }
 
 async fn summarize_local(appstate: &AppState, params: &PaymentsSummaryQueryParams) -> PaymentProcessorsSummaries {
