@@ -9,9 +9,8 @@ use client_full::{
     CreatePayment, Db, DbHandle, PaymentProcessorsSummaries, PaymentsSummaryQueryParams,
     RequestPayment, Summary,
 };
-use std::sync::Arc;
 
-use tokio::sync::{Semaphore, mpsc};
+use tokio::sync::mpsc;
 
 enum Processor {
     Default,
