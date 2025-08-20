@@ -21,7 +21,6 @@ enum Processor {
 #[derive(Clone)]
 struct AppState {
     queue_tx: mpsc::Sender<RequestPayment>,
-    concurrency: Arc<Semaphore>,
     http: reqwest::Client,
     default_db: DbHandle,
     fallback_db: DbHandle,
@@ -39,7 +38,6 @@ async fn main() {
 
     let appstate = AppState {
         queue_tx: tx.clone(),
-        concurrency: Arc::new(Semaphore::new(16)),
         http: reqwest::Client::builder()
             .tcp_nodelay(true)
             .build()
@@ -67,14 +65,8 @@ async fn main() {
 
 async fn run_dispatcher(mut rx: mpsc::Receiver<RequestPayment>, state: AppState) {
     while let Some(job) = rx.recv().await {
-        let permit = match state.concurrency.clone().acquire_owned().await {
-            Ok(p) => p,
-            Err(_) => break,
-        };
-
         let st = state.clone();
         tokio::spawn(async move {
-            let _permit = permit;
             process_payment(job, &st).await;
         });
     }
