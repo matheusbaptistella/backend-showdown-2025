@@ -93,7 +93,7 @@ async fn process_payment(job: RequestPayment, state: &AppState) {
         let status = state.http.post(url).json(&job).send().await.unwrap().status();
 
         if status.is_success() {
-            let timestamp = job.requested_at.timestamp_millis();
+            let timestamp = job.requested_at.timestamp_micros();
             let amount = (job.amount * 100.0) as u64;
 
             match processor {
@@ -118,8 +118,8 @@ async fn process_payment(job: RequestPayment, state: &AppState) {
 }
 
 async fn summarize_local(appstate: &AppState, params: &PaymentsSummaryQueryParams) -> PaymentProcessorsSummaries {
-    let from = params.from.map(|dt| dt.timestamp_millis());
-    let to = params.to.map(|dt| dt.timestamp_millis());
+    let from = params.from.map(|dt| dt.timestamp_micros());
+    let to = params.to.map(|dt| dt.timestamp_micros());
 
     let (d_count, d_total) = appstate.default_db.get(from, to).await;
     let (f_count, f_total) = appstate.fallback_db.get(from, to).await;

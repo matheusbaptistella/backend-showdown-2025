@@ -15,7 +15,7 @@ pub struct DbHandle {
 }
 
 pub struct Db {
-    // Stores the pair (request_count, total_amount) sorted by timestamp
+    // Stores the pair (request_count, total_amount) sorted by timestamp in micro seconds
     data: BTreeMap<i64, (u64, u64)>,
 }
 
