@@ -7,19 +7,14 @@ use axum::{
 use chrono::Utc;
 use client_full::{
     CreatePayment, Db, DbHandle, PaymentProcessorsSummaries, PaymentsSummaryQueryParams,
-    RequestPayment, Summary,
+    RequestPayment, Summary, Command, Processor, GetRequest
 };
 
-use tokio::sync::mpsc;
-
-enum Processor {
-    Default,
-    Fallback,
-}
+use tokio::sync::{mpsc, oneshot};
 
 #[derive(Clone)]
 struct AppState {
-    queue_tx: mpsc::Sender<RequestPayment>,
+    queue_tx: mpsc::Sender<Command>,
     http: reqwest::Client,
     default_db: DbHandle,
     fallback_db: DbHandle,
@@ -28,7 +23,7 @@ struct AppState {
 
 #[tokio::main]
 async fn main() {
-    let (tx, rx) = mpsc::channel::<RequestPayment>(1024);
+    let (tx, rx) = mpsc::channel::<Command>(1024);
 
     let default_db = DbHandle::new(Db::new());
     let fallback_db = DbHandle::new(Db::new());
@@ -62,12 +57,22 @@ async fn main() {
     axum::serve(listener, app).await.unwrap();
 }
 
-async fn run_dispatcher(mut rx: mpsc::Receiver<RequestPayment>, state: AppState) {
-    while let Some(job) = rx.recv().await {
+async fn run_dispatcher(mut rx: mpsc::Receiver<Command>, state: AppState) {
+    while let Some(cmd) = rx.recv().await {
         let st = state.clone();
-        tokio::spawn(async move {
-            process_payment(job, &st).await;
-        });
+
+        match cmd {
+            Command::Set(job) => {
+                tokio::spawn(async move {
+                    process_payment(job, &st).await;
+                });
+            },
+            Command::Get(job) => {
+                tokio::spawn(async move {
+                    process_summary(job, &st).await;
+                });
+            },
+        }
     }
 }
 
@@ -114,6 +119,25 @@ async fn process_payment(job: RequestPayment, state: &AppState) {
     }
 }
 
+async fn process_summary(job: GetRequest, state: &AppState) {
+    let endpoint = format!(
+        "{}/payments-summary/local",
+        state.peer_url.trim_end_matches('/')
+    );
+
+    let resp = state
+        .http
+        .get(endpoint)
+        .query(&job.0)
+        .send()
+        .await
+        .unwrap();
+
+    let data = resp.json::<PaymentProcessorsSummaries>().await.unwrap();
+
+    job.1.send(data).unwrap();
+}
+
 async fn summarize_local(
     appstate: &AppState,
     params: &PaymentsSummaryQueryParams,
@@ -147,7 +171,7 @@ async fn payments(State(appstate): State<AppState>, Json(cp): Json<CreatePayment
         requested_at: Utc::now(),
     };
 
-    appstate.queue_tx.send(rp).await.unwrap();
+    appstate.queue_tx.send(Command::Set(rp)).await.unwrap();
 }
 
 async fn payments_summary_local(
@@ -161,22 +185,12 @@ async fn payments_summary(
     State(appstate): State<AppState>,
     Query(params): Query<PaymentsSummaryQueryParams>,
 ) -> impl IntoResponse {
+    let (tx, rx) = oneshot::channel::<PaymentProcessorsSummaries>();
     let mut total = summarize_local(&appstate, &params).await;
 
-    let endpoint = format!(
-        "{}/payments-summary/local",
-        appstate.peer_url.trim_end_matches('/')
-    );
+    appstate.queue_tx.send(Command::Get((params, tx))).await.unwrap();
 
-    let resp = appstate
-        .http
-        .get(endpoint)
-        .query(&params)
-        .send()
-        .await
-        .unwrap();
-
-    let data = resp.json::<PaymentProcessorsSummaries>().await.unwrap();
+    let data = rx.await.unwrap();
 
     total.default_sum.total_amount += data.default_sum.total_amount;
     total.default_sum.total_requests += data.default_sum.total_requests;

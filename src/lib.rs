@@ -1,6 +1,18 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+pub enum Processor {
+    Default,
+    Fallback,
+}
+
+pub type GetRequest = (PaymentsSummaryQueryParams, oneshot::Sender<PaymentProcessorsSummaries>);
+
+pub enum Command {
+    Get(GetRequest),
+    Set(RequestPayment),
+}
+
 #[derive(Deserialize, Serialize)]
 pub struct CreatePayment {
     #[serde(rename = "correlationId")]
@@ -23,14 +35,14 @@ pub struct PaymentsSummaryQueryParams {
     pub to: Option<DateTime<Utc>>,
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct PaymentProcessorsSummaries {
     #[serde(rename = "default")]
     pub default_sum: Summary,
     pub fallback: Summary,
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct Summary {
     #[serde(rename = "totalRequests")]
     pub total_requests: u64,
@@ -40,3 +52,4 @@ pub struct Summary {
 
 pub mod db;
 pub use db::{Db, DbHandle};
+use tokio::sync::oneshot;
