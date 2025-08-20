@@ -90,7 +90,14 @@ async fn process_payment(job: RequestPayment, state: &AppState) {
             Processor::Fallback => "http://payment-processor-fallback:8080/payments",
         };
 
-        let status = state.http.post(url).json(&job).send().await.unwrap().status();
+        let status = state
+            .http
+            .post(url)
+            .json(&job)
+            .send()
+            .await
+            .unwrap()
+            .status();
 
         if status.is_success() {
             let timestamp = job.requested_at.timestamp_micros();
@@ -102,8 +109,7 @@ async fn process_payment(job: RequestPayment, state: &AppState) {
             }
 
             break;
-        }
-        else if status.is_client_error() {
+        } else if status.is_client_error() {
             if id_retry {
                 break;
             }
@@ -117,7 +123,10 @@ async fn process_payment(job: RequestPayment, state: &AppState) {
     }
 }
 
-async fn summarize_local(appstate: &AppState, params: &PaymentsSummaryQueryParams) -> PaymentProcessorsSummaries {
+async fn summarize_local(
+    appstate: &AppState,
+    params: &PaymentsSummaryQueryParams,
+) -> PaymentProcessorsSummaries {
     let from = params.from.map(|dt| dt.timestamp_micros());
     let to = params.to.map(|dt| dt.timestamp_micros());
 
@@ -134,7 +143,10 @@ async fn summarize_local(appstate: &AppState, params: &PaymentsSummaryQueryParam
         total_amount: f_total as f64 / 100.0,
     };
 
-    PaymentProcessorsSummaries {default_sum, fallback }
+    PaymentProcessorsSummaries {
+        default_sum,
+        fallback,
+    }
 }
 
 async fn payments(State(appstate): State<AppState>, Json(cp): Json<CreatePayment>) {
@@ -160,9 +172,18 @@ async fn payments_summary(
 ) -> impl IntoResponse {
     let mut total = summarize_local(&appstate, &params).await;
 
-    let endpoint = format!("{}/payments-summary/local", appstate.peer_url.trim_end_matches('/'));
+    let endpoint = format!(
+        "{}/payments-summary/local",
+        appstate.peer_url.trim_end_matches('/')
+    );
 
-    let resp = appstate.http.get(endpoint).query(&params).send().await.unwrap();
+    let resp = appstate
+        .http
+        .get(endpoint)
+        .query(&params)
+        .send()
+        .await
+        .unwrap();
 
     let data = resp.json::<PaymentProcessorsSummaries>().await.unwrap();
 
