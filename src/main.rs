@@ -10,7 +10,6 @@ use client_full::{
     RequestPayment, Summary,
 };
 use std::sync::Arc;
-use std::time::Duration;
 
 use tokio::sync::{Semaphore, mpsc};
 
@@ -84,7 +83,6 @@ async fn run_dispatcher(mut rx: mpsc::Receiver<RequestPayment>, state: AppState)
 async fn process_payment(job: RequestPayment, state: &AppState) {
     let mut processor = Processor::Default;
     let mut id_retry = false;
-    let mut retries = 10;
 
     loop {
         let url = match processor {
@@ -111,15 +109,10 @@ async fn process_payment(job: RequestPayment, state: &AppState) {
             }
             id_retry = true;
         }
-        else if status.is_server_error() && retries > 0 {
-            retries -= 1;
-            tokio::time::sleep(Duration::from_millis(40)).await;
-            continue;
-        }
 
-        (retries, processor) = match processor {
-            Processor::Default => (0, Processor::Fallback),
-            _ => (2, Processor::Default),
+        processor = match processor {
+            Processor::Default => Processor::Fallback,
+            _ => Processor::Default,
         };
     }
 }
