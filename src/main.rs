@@ -28,7 +28,7 @@ struct AppState {
 
 #[tokio::main]
 async fn main() {
-    let (tx, rx) = mpsc::channel::<RequestPayment>(8192);
+    let (tx, rx) = mpsc::channel::<RequestPayment>(1024);
 
     let default_db = DbHandle::new(Db::new());
     let fallback_db = DbHandle::new(Db::new());
