@@ -1,15 +1,26 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use tokio::sync::oneshot;
+
+pub mod db;
+pub use db::{Db, DbHandle};
+
+pub mod inflight;
+pub use inflight::Inflight;
 
 pub enum Processor {
     Default,
     Fallback,
 }
 
-pub type GetRequest = (PaymentsSummaryQueryParams, oneshot::Sender<PaymentProcessorsSummaries>);
+pub type GetRequest = (
+    PaymentsSummaryQueryParams,
+    oneshot::Sender<PaymentProcessorsSummaries>,
+);
 
 pub enum Command {
     Get(GetRequest),
+    GetRemote(GetRequest),
     Set(RequestPayment),
 }
 
@@ -29,7 +40,7 @@ pub struct RequestPayment {
     pub requested_at: DateTime<Utc>,
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 pub struct PaymentsSummaryQueryParams {
     pub from: Option<DateTime<Utc>>,
     pub to: Option<DateTime<Utc>>,
@@ -49,7 +60,3 @@ pub struct Summary {
     #[serde(rename = "totalAmount")]
     pub total_amount: f64,
 }
-
-pub mod db;
-pub use db::{Db, DbHandle};
-use tokio::sync::oneshot;

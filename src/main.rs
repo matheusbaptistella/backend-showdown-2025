@@ -6,8 +6,7 @@ use axum::{
 };
 use chrono::Utc;
 use client_full::{
-    CreatePayment, Db, DbHandle, PaymentProcessorsSummaries, PaymentsSummaryQueryParams,
-    RequestPayment, Summary, Command, Processor, GetRequest
+    Command, CreatePayment, Db, DbHandle, GetRequest, Inflight, PaymentProcessorsSummaries, PaymentsSummaryQueryParams, Processor, RequestPayment, Summary
 };
 
 use tokio::sync::{mpsc, oneshot};
@@ -19,6 +18,7 @@ struct AppState {
     default_db: DbHandle,
     fallback_db: DbHandle,
     peer_url: String,
+    inflight: Inflight,
 }
 
 #[tokio::main]
@@ -39,6 +39,7 @@ async fn main() {
         default_db,
         fallback_db,
         peer_url,
+        inflight: Inflight::default(),
     };
 
     let dispatcher_state = appstate.clone();
@@ -69,7 +70,14 @@ async fn run_dispatcher(mut rx: mpsc::Receiver<Command>, state: AppState) {
             },
             Command::Get(job) => {
                 tokio::spawn(async move {
-                    process_summary(job, &st).await;
+                    st.inflight.wait_until_unlocked(job.0.from, job.0.from).await;
+                    summarize_local(&st, job).await;
+                });
+            },
+            Command::GetRemote(job) => {
+                tokio::spawn(async move {
+                    st.inflight.wait_until_unlocked(job.0.from, job.0.from).await;
+                    process_remote_summary(&st, job).await;
                 });
             },
         }
@@ -77,6 +85,7 @@ async fn run_dispatcher(mut rx: mpsc::Receiver<Command>, state: AppState) {
 }
 
 async fn process_payment(job: RequestPayment, state: &AppState) {
+    let timestamp = job.requested_at.timestamp_micros();
     let mut processor = Processor::Default;
     let mut id_retry = false;
 
@@ -117,9 +126,11 @@ async fn process_payment(job: RequestPayment, state: &AppState) {
             _ => Processor::Default,
         };
     }
+
+    state.inflight.end(timestamp).await;
 }
 
-async fn process_summary(job: GetRequest, state: &AppState) {
+async fn process_remote_summary(state: &AppState, job: GetRequest) {
     let endpoint = format!(
         "{}/payments-summary/local",
         state.peer_url.trim_end_matches('/')
@@ -139,14 +150,14 @@ async fn process_summary(job: GetRequest, state: &AppState) {
 }
 
 async fn summarize_local(
-    appstate: &AppState,
-    params: &PaymentsSummaryQueryParams,
-) -> PaymentProcessorsSummaries {
-    let from = params.from.map(|dt| dt.timestamp_micros());
-    let to = params.to.map(|dt| dt.timestamp_micros());
+    state: &AppState,
+    job: GetRequest,
+) {
+    let from = job.0.from.map(|dt| dt.timestamp_micros());
+    let to = job.0.to.map(|dt| dt.timestamp_micros());
 
-    let (d_count, d_total) = appstate.default_db.get(from, to).await;
-    let (f_count, f_total) = appstate.fallback_db.get(from, to).await;
+    let (d_count, d_total) = state.default_db.get(from, to).await;
+    let (f_count, f_total) = state.fallback_db.get(from, to).await;
 
     let default_sum = Summary {
         total_requests: d_count,
@@ -158,10 +169,12 @@ async fn summarize_local(
         total_amount: f_total as f64 / 100.0,
     };
 
-    PaymentProcessorsSummaries {
+    let data = PaymentProcessorsSummaries {
         default_sum,
         fallback,
-    }
+    };
+
+    job.1.send(data).unwrap();
 }
 
 async fn payments(State(appstate): State<AppState>, Json(cp): Json<CreatePayment>) {
@@ -171,6 +184,8 @@ async fn payments(State(appstate): State<AppState>, Json(cp): Json<CreatePayment
         requested_at: Utc::now(),
     };
 
+    let timestamp = rp.requested_at.timestamp_micros();
+    appstate.inflight.start(timestamp).await;
     appstate.queue_tx.send(Command::Set(rp)).await.unwrap();
 }
 
@@ -178,7 +193,13 @@ async fn payments_summary_local(
     State(appstate): State<AppState>,
     Query(params): Query<PaymentsSummaryQueryParams>,
 ) -> impl IntoResponse {
-    Json(summarize_local(&appstate, &params).await)
+    let (tx, rx) = oneshot::channel::<PaymentProcessorsSummaries>();
+
+    appstate.queue_tx.send(Command::Get((params, tx))).await.unwrap();
+
+    let total = rx.await.unwrap();
+
+    Json(total)
 }
 
 async fn payments_summary(
@@ -186,11 +207,15 @@ async fn payments_summary(
     Query(params): Query<PaymentsSummaryQueryParams>,
 ) -> impl IntoResponse {
     let (tx, rx) = oneshot::channel::<PaymentProcessorsSummaries>();
-    let mut total = summarize_local(&appstate, &params).await;
+    let (r_tx, r_rx) = oneshot::channel::<PaymentProcessorsSummaries>();
 
-    appstate.queue_tx.send(Command::Get((params, tx))).await.unwrap();
+    appstate.queue_tx.send(Command::Get((params.clone(), tx))).await.unwrap();
 
-    let data = rx.await.unwrap();
+    let mut total = rx.await.unwrap();
+
+    appstate.queue_tx.send(Command::Get((params, r_tx))).await.unwrap();
+
+    let data = r_rx.await.unwrap();
 
     total.default_sum.total_amount += data.default_sum.total_amount;
     total.default_sum.total_requests += data.default_sum.total_requests;
