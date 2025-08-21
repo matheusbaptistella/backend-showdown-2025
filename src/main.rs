@@ -70,13 +70,13 @@ async fn run_dispatcher(mut rx: mpsc::Receiver<Command>, state: AppState) {
             },
             Command::Get(job) => {
                 tokio::spawn(async move {
-                    st.inflight.wait_until_unlocked(job.0.from, job.0.from).await;
+                    st.inflight.wait_until_unlocked(job.0.from, job.0.to).await;
                     summarize_local(&st, job).await;
                 });
             },
             Command::GetRemote(job) => {
                 tokio::spawn(async move {
-                    st.inflight.wait_until_unlocked(job.0.from, job.0.from).await;
+                    st.inflight.wait_until_unlocked(job.0.from, job.0.to).await;
                     process_remote_summary(&st, job).await;
                 });
             },
@@ -85,9 +85,10 @@ async fn run_dispatcher(mut rx: mpsc::Receiver<Command>, state: AppState) {
 }
 
 async fn process_payment(job: RequestPayment, state: &AppState) {
-    let timestamp = job.requested_at.timestamp_micros();
     let mut processor = Processor::Default;
     let mut id_retry = false;
+    let timestamp = job.requested_at.timestamp_micros();
+    let _guard = state.inflight.register(timestamp);
 
     loop {
         let url = match processor {
@@ -126,8 +127,6 @@ async fn process_payment(job: RequestPayment, state: &AppState) {
             _ => Processor::Default,
         };
     }
-
-    state.inflight.end(timestamp).await;
 }
 
 async fn process_remote_summary(state: &AppState, job: GetRequest) {
@@ -184,8 +183,6 @@ async fn payments(State(appstate): State<AppState>, Json(cp): Json<CreatePayment
         requested_at: Utc::now(),
     };
 
-    let timestamp = rp.requested_at.timestamp_micros();
-    appstate.inflight.start(timestamp).await;
     appstate.queue_tx.send(Command::Set(rp)).await.unwrap();
 }
 
@@ -213,7 +210,7 @@ async fn payments_summary(
 
     let mut total = rx.await.unwrap();
 
-    appstate.queue_tx.send(Command::Get((params, r_tx))).await.unwrap();
+    appstate.queue_tx.send(Command::GetRemote((params, r_tx))).await.unwrap();
 
     let data = r_rx.await.unwrap();
 

@@ -6,7 +6,7 @@ pub mod db;
 pub use db::{Db, DbHandle};
 
 pub mod inflight;
-pub use inflight::Inflight;
+pub use inflight::{Inflight, InflightGuard};
 
 pub enum Processor {
     Default,

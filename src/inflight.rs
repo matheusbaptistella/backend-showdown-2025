@@ -14,20 +14,17 @@ pub struct Inflight{
     notify:  Arc<Notify>,
 }
 
+pub struct InflightGuard<'a> {
+    inflight: &'a Inflight,
+    timestamp: i64,
+}
+
 impl Inflight {
-    pub async fn start(&self, timestamp: i64) {
+    pub fn register(&self, timestamp: i64) -> InflightGuard {
         let mut state = self.index.lock().unwrap();
         *state.entry(timestamp).or_insert(0) += 1;
-    }
 
-    pub async fn end(&self, timestamp: i64) {
-        let mut state = self.index.lock().unwrap();
-        let c = state.get_mut(&timestamp).unwrap();
-        *c -= 1;
-        if *c == 0 {
-            state.remove(&timestamp);
-            self.notify.notify_waiters();
-        }
+        InflightGuard { inflight: self, timestamp }
     }
 
     pub fn is_locked(&self, from: Option<DateTime<Utc>>, to: Option<DateTime<Utc>>) -> bool {
@@ -45,6 +42,18 @@ impl Inflight {
     pub async fn wait_until_unlocked(&self, from: Option<DateTime<Utc>>, to: Option<DateTime<Utc>>) {
         while self.is_locked(from, to) {
             self.notify.notified().await;
+        }
+    }
+}
+
+impl<'a> Drop for InflightGuard<'a> {
+    fn drop(&mut self) {
+        let mut state = self.inflight.index.lock().unwrap();
+        let c = state.get_mut(&self.timestamp).unwrap();
+        *c -= 1;
+        if *c == 0 {
+            state.remove(&self.timestamp);
+            self.inflight.notify.notify_waiters();
         }
     }
 }
