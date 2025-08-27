@@ -6,32 +6,34 @@ use axum::{
 };
 use chrono::Utc;
 use client_full::{
-    Command, CreatePayment, Db, DbHandle, GetRequest, Inflight, PaymentProcessorsSummaries, PaymentsSummaryQueryParams, Processor, RequestPayment, Summary
+    CreatePayment, Db, LocalSummaryParams, Message, PaymentProcessorsSummaries, PaymentsSummaryQueryParams, Processor, RequestPayment, Summary
 };
-
-use tokio::sync::{mpsc, oneshot};
+use reqwest::StatusCode;
+use std::sync::Arc;
+use tokio::sync::{mpsc, Semaphore};
 
 #[derive(Clone)]
 struct AppState {
-    queue_tx: mpsc::Sender<Command>,
+    queue_tx: mpsc::Sender<Message>,
+    concurrency: Arc<Semaphore>,
     http: reqwest::Client,
-    default_db: DbHandle,
-    fallback_db: DbHandle,
+    default_db: Db,
+    fallback_db: Db,
     peer_url: String,
-    inflight: Inflight,
 }
 
 #[tokio::main]
 async fn main() {
-    let (tx, rx) = mpsc::channel::<Command>(1024);
+    let (tx, rx) = mpsc::channel::<Message>(10240);
 
-    let default_db = DbHandle::new(Db::new());
-    let fallback_db = DbHandle::new(Db::new());
+    let default_db = Db::default();
+    let fallback_db = Db::default();
 
     let peer_url = std::env::var("PEER_URL").ok().unwrap();
 
     let appstate = AppState {
         queue_tx: tx.clone(),
+        concurrency: Arc::new(Semaphore::new(100)),
         http: reqwest::Client::builder()
             .tcp_nodelay(true)
             .build()
@@ -39,7 +41,6 @@ async fn main() {
         default_db,
         fallback_db,
         peer_url,
-        inflight: Inflight::default(),
     };
 
     let dispatcher_state = appstate.clone();
@@ -58,78 +59,97 @@ async fn main() {
     axum::serve(listener, app).await.unwrap();
 }
 
-async fn run_dispatcher(mut rx: mpsc::Receiver<Command>, state: AppState) {
-    while let Some(cmd) = rx.recv().await {
+async fn run_dispatcher(mut rx: mpsc::Receiver<Message>, state: AppState) {
+    while let Some((rp, retries)) = rx.recv().await {
+        let permit = state.concurrency.clone().acquire_owned().await.unwrap();
         let st = state.clone();
 
-        match cmd {
-            Command::Set(job) => {
-                tokio::spawn(async move {
-                    process_payment(job, &st).await;
-                });
-            },
-            Command::Get(job) => {
-                tokio::spawn(async move {
-                    st.inflight.wait_until_unlocked(job.0.from, job.0.to).await;
-                    summarize_local(&st, job).await;
-                });
-            },
-            Command::GetRemote(job) => {
-                tokio::spawn(async move {
-                    st.inflight.wait_until_unlocked(job.0.from, job.0.to).await;
-                    process_remote_summary(&st, job).await;
-                });
-            },
-        }
+        tokio::spawn(async move {
+            let _permit = permit;
+            process_payment(rp, retries, &st).await;
+        });
     }
+
 }
 
-async fn process_payment(job: RequestPayment, state: &AppState) {
+async fn process_payment(rp: RequestPayment, retries: u8, state: &AppState) {
+    // let mut processor = Processor::Default;
+    // let mut id_retry = false;
+
+    // loop {
+    //     let url = match processor {
+    //         Processor::Default => "http://payment-processor-default:8080/payments",
+    //         Processor::Fallback => "http://payment-processor-fallback:8080/payments",
+    //     };
+
+    //     let status = state
+    //         .http
+    //         .post(url)
+    //         .json(&rp)
+    //         .send()
+    //         .await
+    //         .unwrap()
+    //         .status();
+
+    //     if status.is_success() {
+    //         let timestamp = rp.requested_at.timestamp_micros();
+    //         let amount = (rp.amount * 100.0) as u64;
+
+    //         match processor {
+    //             Processor::Default => state.default_db.set(timestamp, amount),
+    //             Processor::Fallback => state.fallback_db.set(timestamp, amount),
+    //         }
+
+    //         break;
+    //     } else if status.is_client_error() {
+    //         // if id_retry {
+    //         //     break;
+    //         // }
+    //         // id_retry = true;
+    //         break;
+    //     }
+
+    //     processor = match processor {
+    //         Processor::Default => Processor::Fallback,
+    //         _ => Processor::Default,
+    //     };
+    // }Default
+
     let mut processor = Processor::Default;
-    let mut id_retry = false;
-    let timestamp = job.requested_at.timestamp_micros();
-    let _guard = state.inflight.register(timestamp);
 
-    loop {
-        let url = match processor {
-            Processor::Default => "http://payment-processor-default:8080/payments",
-            Processor::Fallback => "http://payment-processor-fallback:8080/payments",
-        };
+    if retries % 2 != 0 {
+        processor = Processor::Fallback;
+    }
 
-        let status = state
-            .http
-            .post(url)
-            .json(&job)
-            .send()
-            .await
-            .unwrap()
-            .status();
+    let url = match processor {
+        Processor::Default => "http://payment-processor-default:8080/payments",
+        Processor::Fallback => "http://payment-processor-fallback:8080/payments",
+    };
 
-        if status.is_success() {
-            let timestamp = job.requested_at.timestamp_micros();
-            let amount = (job.amount * 100.0) as u64;
+    let status = state
+        .http
+        .post(url)
+        .json(&rp)
+        .send()
+        .await
+        .unwrap()
+        .status();
 
-            match processor {
-                Processor::Default => state.default_db.set(timestamp, amount).await,
-                Processor::Fallback => state.fallback_db.set(timestamp, amount).await,
-            }
+    if status.is_success() {
+        let timestamp = rp.requested_at.timestamp_micros();
+        let amount = (rp.amount * 100.0) as u64;
 
-            break;
-        } else if status.is_client_error() {
-            if id_retry {
-                break;
-            }
-            id_retry = true;
+        match processor {
+            Processor::Default => state.default_db.set(timestamp, amount),
+            Processor::Fallback => state.fallback_db.set(timestamp, amount),
         }
-
-        processor = match processor {
-            Processor::Default => Processor::Fallback,
-            _ => Processor::Default,
-        };
+    } else if status.is_server_error() || status == StatusCode::TOO_MANY_REQUESTS {
+        let retries = retries + 1;
+        state.queue_tx.send((rp, retries)).await.unwrap();
     }
 }
 
-async fn process_remote_summary(state: &AppState, job: GetRequest) {
+async fn process_remote_summary(state: &AppState, params: &LocalSummaryParams) -> PaymentProcessorsSummaries {
     let endpoint = format!(
         "{}/payments-summary/local",
         state.peer_url.trim_end_matches('/')
@@ -138,25 +158,25 @@ async fn process_remote_summary(state: &AppState, job: GetRequest) {
     let resp = state
         .http
         .get(endpoint)
-        .query(&job.0)
+        .query(params)
         .send()
         .await
         .unwrap();
 
     let data = resp.json::<PaymentProcessorsSummaries>().await.unwrap();
 
-    job.1.send(data).unwrap();
+    data
 }
 
-async fn summarize_local(
+fn summarize_local(
     state: &AppState,
-    job: GetRequest,
-) {
-    let from = job.0.from.map(|dt| dt.timestamp_micros());
-    let to = job.0.to.map(|dt| dt.timestamp_micros());
+    params: &PaymentsSummaryQueryParams,
+) ->  PaymentProcessorsSummaries{
+    let from = params.from.map(|dt| dt.timestamp_micros());
+    let to = params.to.map(|dt| dt.timestamp_micros());
 
-    let (d_count, d_total) = state.default_db.get(from, to).await;
-    let (f_count, f_total) = state.fallback_db.get(from, to).await;
+    let (d_count, d_total) = state.default_db.get(from, to);
+    let (f_count, f_total) = state.fallback_db.get(from, to);
 
     let default_sum = Summary {
         total_requests: d_count,
@@ -173,7 +193,7 @@ async fn summarize_local(
         fallback,
     };
 
-    job.1.send(data).unwrap();
+    data
 }
 
 async fn payments(State(appstate): State<AppState>, Json(cp): Json<CreatePayment>) {
@@ -183,36 +203,36 @@ async fn payments(State(appstate): State<AppState>, Json(cp): Json<CreatePayment
         requested_at: Utc::now(),
     };
 
-    appstate.queue_tx.send(Command::Set(rp)).await.unwrap();
+    appstate.queue_tx.send((rp, 0)).await.unwrap();
 }
 
 async fn payments_summary_local(
     State(appstate): State<AppState>,
-    Query(params): Query<PaymentsSummaryQueryParams>,
+    Query(params): Query<LocalSummaryParams>,
 ) -> impl IntoResponse {
-    let (tx, rx) = oneshot::channel::<PaymentProcessorsSummaries>();
 
-    appstate.queue_tx.send(Command::Get((params, tx))).await.unwrap();
+    let ps = PaymentsSummaryQueryParams {
+        from: params.from,
+        to: params.to,
+    };
 
-    let total = rx.await.unwrap();
+    let data = summarize_local(&appstate, &ps);
 
-    Json(total)
+    Json(data)
 }
 
 async fn payments_summary(
     State(appstate): State<AppState>,
     Query(params): Query<PaymentsSummaryQueryParams>,
 ) -> impl IntoResponse {
-    let (tx, rx) = oneshot::channel::<PaymentProcessorsSummaries>();
-    let (r_tx, r_rx) = oneshot::channel::<PaymentProcessorsSummaries>();
-
-    appstate.queue_tx.send(Command::Get((params.clone(), tx))).await.unwrap();
-
-    let mut total = rx.await.unwrap();
-
-    appstate.queue_tx.send(Command::GetRemote((params, r_tx))).await.unwrap();
-
-    let data = r_rx.await.unwrap();
+    let requested_at = Utc::now().timestamp_micros();
+    let mut total = summarize_local(&appstate, &params);
+    let ps = LocalSummaryParams {
+        from: params.from,
+        to: params.to,
+        requested_at,
+    };
+    let data = process_remote_summary(&appstate, &ps).await;
 
     total.default_sum.total_amount += data.default_sum.total_amount;
     total.default_sum.total_requests += data.default_sum.total_requests;
