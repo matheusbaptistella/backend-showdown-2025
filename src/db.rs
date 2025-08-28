@@ -1,6 +1,7 @@
 use std::{
     collections::BTreeMap,
-    ops::Bound::{Included, Unbounded}, sync::{Arc, Mutex},
+    ops::Bound::{Included, Unbounded},
+    sync::{Arc, Mutex},
 };
 
 #[derive(Clone, Default)]

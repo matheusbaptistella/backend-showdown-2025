@@ -2,24 +2,25 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 pub mod db;
-pub use db::{Db};
+pub use db::Db;
+
+pub mod worker;
+pub use worker::{Command, Worker};
 
 pub enum Processor {
     Default,
     Fallback,
 }
 
-pub type Message = (RequestPayment, u8);
-
 #[derive(Deserialize, Serialize)]
-pub struct CreatePayment {
+pub struct PaymentPayload {
     #[serde(rename = "correlationId")]
     pub correlation_id: String,
     pub amount: f64,
 }
 
 #[derive(Serialize)]
-pub struct RequestPayment {
+pub struct Payment {
     #[serde(rename = "correlationId")]
     pub correlation_id: String,
     pub amount: f64,
@@ -28,13 +29,14 @@ pub struct RequestPayment {
 }
 
 #[derive(Clone, Deserialize, Serialize)]
-pub struct PaymentsSummaryQueryParams {
+pub struct SummaryQueryParams {
     pub from: Option<DateTime<Utc>>,
     pub to: Option<DateTime<Utc>>,
+    pub only_local: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-pub struct PaymentProcessorsSummaries {
+pub struct ProcessorSummaries {
     #[serde(rename = "default")]
     pub default_sum: Summary,
     pub fallback: Summary,
@@ -46,11 +48,4 @@ pub struct Summary {
     pub total_requests: u64,
     #[serde(rename = "totalAmount")]
     pub total_amount: f64,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-pub struct LocalSummaryParams {
-    pub from: Option<DateTime<Utc>>,
-    pub to: Option<DateTime<Utc>>,
-    pub requested_at: i64,
 }
