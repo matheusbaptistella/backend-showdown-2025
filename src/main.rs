@@ -5,22 +5,42 @@ use axum::{
     routing::{get, post},
 };
 use chrono::Utc;
-use client_full::{Command, Payment, PaymentPayload, SummaryQueryParams, Worker};
+use client_full::{worker::WorkerState, Command, Payment, PaymentPayload, SummaryQueryParams, Worker};
 use tokio::sync::{mpsc, oneshot};
 
 
 #[tokio::main]
 async fn main() {
-    let (tx, rx) = mpsc::channel::<Command>(10240);
-    let worker_state = Worker::new(tx.clone(), rx);
+    let worker_state = WorkerState::new();
+    let mut set_workers_txs = Vec::new();
 
-    for _ in 0..32 {
-        let worker = worker_state.clone();
+    for _ in 0..64 {
+        let (w_tx, w_rx) = mpsc::channel::<Command>(4096);
+        set_workers_txs.push(w_tx.clone());
+
+        let worker = Worker::new(w_tx, worker_state.clone());
 
         tokio::spawn(async move {
-            worker.run().await;
+            worker.run(w_rx).await
         });
     }
+
+    let mut get_workers_txs = Vec::new();
+
+    for _ in 0..2 {
+        let (w_tx, w_rx) = mpsc::channel::<Command>(4096);
+        get_workers_txs.push(w_tx.clone());
+
+        let worker = Worker::new(w_tx, worker_state.clone());
+
+        tokio::spawn(async move {
+            worker.run(w_rx).await
+        });
+    }
+
+    let (tx, rx) = mpsc::channel::<Command>(10240);
+
+    tokio::spawn(dispatcher(rx, get_workers_txs, set_workers_txs));
 
     let app = Router::new()
         .route("/payments", post(payments))
@@ -32,6 +52,32 @@ async fn main() {
     println!("Listening on 0.0.0.0:3000");
 
     axum::serve(listener, app).await.unwrap();
+}
+
+async fn dispatcher(
+    mut rx: mpsc::Receiver<Command>,
+    get_workers_txs: Vec<mpsc::Sender<Command>>,
+    set_workers_txs: Vec<mpsc::Sender<Command>>,
+) {
+    let mut i = 0;
+
+    while let Some(cmd) = rx.recv().await {
+        match cmd {
+            Command::Set(..) => {
+                let tx = &set_workers_txs[i % set_workers_txs.len()];
+                i += 1;
+
+                tx.send(cmd).await.unwrap();
+            },
+            Command::Get(..) => {
+                let tx = &get_workers_txs[i % get_workers_txs.len()];
+                i += 1;
+
+                tx.send(cmd).await.unwrap();
+            }
+        }
+
+    }
 }
 
 async fn payments(State(cmd_queue): State<mpsc::Sender<Command>>, Json(payload): Json<PaymentPayload>) {
