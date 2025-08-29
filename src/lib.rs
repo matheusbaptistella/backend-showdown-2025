@@ -5,7 +5,7 @@ pub mod db;
 pub use db::Db;
 
 pub mod worker;
-pub use worker::{Command, Worker};
+pub use worker::{Command, Worker, WorkerState};
 
 pub enum Processor {
     Default,
@@ -19,7 +19,7 @@ pub struct PaymentPayload {
     pub amount: f64,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 pub struct Payment {
     #[serde(rename = "correlationId")]
     pub correlation_id: String,

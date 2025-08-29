@@ -50,15 +50,7 @@ impl Worker {
         }
     }
 
-    pub async fn run(self, mut rx: mpsc::Receiver<Command>) {
-        let mut fails = 1;
-
-        while let Some(cmd) = rx.recv().await {
-            self.process(cmd, &mut fails).await;
-        }
-    }
-
-    async fn process(&self, cmd: Command, fails: &mut u64) {
+    pub async fn process(&self, cmd: Command) {    
         match cmd {
             Command::Get(from, to, only_local, tx) => {
                 let mut local_data = self.local_summary(from, to);
@@ -77,15 +69,10 @@ impl Worker {
             Command::Set(p) => {
                 let mut processor = Processor::Default;
 
-                if *fails % 4 != 0 {
-                    processor = Processor::Fallback;
-                }
-
                 let url = match processor {
                     Processor::Default => "http://payment-processor-default:8080/payments",
                     Processor::Fallback => "http://payment-processor-fallback:8080/payments",
                 };
-
                 let status = self.state.http.post(url).json(&p).send().await.unwrap().status();
 
                 if status.is_success() {
@@ -97,8 +84,7 @@ impl Worker {
                         Processor::Fallback => self.state.fallback_db.set(timestamp, amount),
                     }
                 } else if status.is_server_error() || status == StatusCode::TOO_MANY_REQUESTS {
-                    *fails += 1;
-                    self.cmd_queue_tx.send(Command::Set(p)).await.unwrap();
+                    self.cmd_queue_tx.send(Command::Set(p.clone())).await.unwrap();
                 }
             }
         }
