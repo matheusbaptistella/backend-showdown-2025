@@ -4,9 +4,6 @@ use serde::{Deserialize, Serialize};
 pub mod db;
 pub use db::Db;
 
-pub mod worker;
-pub use worker::{Command, Worker, WorkerState};
-
 pub enum Processor {
     Default,
     Fallback,
